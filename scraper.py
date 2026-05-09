@@ -244,60 +244,28 @@ def get_sec_13f_dataset():
         return get_13f_via_efts()
 
     # Parse the TSV
-    # Columns: ACCESSION_NUMBER, INFOTABLE_SK, NAMEOFISSUER, TITLEOFCLASS,
-    #          CUSIP, FIGI, VALUE, SSHPRNAMT, SSHPRNAMTTYPE, PUTCALL,
-    #          INVESTMENTDISCRETION, OTHERMANAGER, VOTING_AUTH_SOLE,
-    #          VOTING_AUTH_SHARED, VOTING_AUTH_NONE
     try:
         lines = infotable_data.strip().split("\n")
         log(f"   Parsing {len(lines)} rows...")
+        log(f"   Header: {lines[0][:300]}")
+        if len(lines) > 1: log(f"   Row 1:  {lines[1][:300]}")
 
-        # Get submission data to map accession numbers to fund names
-        # We'll do this separately — for now just use known CIK patterns
-        fund_holdings = {}  # accession_number -> list of holdings
+        # Parse header to find column indices dynamically
+        header = [h.upper().strip() for h in lines[0].split("\t")]
+        log(f"   Columns ({len(header)}): {header}")
 
-        for line in lines[1:]:  # skip header
-            try:
-                parts = line.split("\t")
-                if len(parts) < 7: continue
-                # INFOTABLE accession format: 0001172661-26-001091 (with dashes)
-                accnum    = parts[0].strip()
-                # Normalise — store both dashed and undashed versions
-                accnum_nodash = accnum.replace("-","")
-                name      = parts[2].strip()
-                value_raw = parts[6].strip()
-                # Post Jan 2023: values in dollars. Pre Jan 2023: in thousands.
-                # The zip filename tells us the period — assume dollars for 2025+
-                value = int(value_raw) if value_raw.isdigit() else 0
-                # If value looks too small (< 1000), it's probably still in thousands
-                if value > 0 and value < 1000:
-                    value = value * 1000
-                disc      = parts[9].strip() if len(parts)>9 else "SOLE"
+        def col(name, default):
+            try: return header.index(name)
+            except: return default
 
-                if value < 1_000_000: continue  # skip small positions
-                if disc not in ["SOLE","DEFINED"]: continue
+        idx_acc   = col("ACCESSION_NUMBER", 0)
+        idx_name  = col("NAMEOFISSUER", 2)
+        idx_value = col("VALUE", 6)
+        idx_disc  = col("INVESTMENTDISCRETION", 9)
+        log(f"   Col indices: acc={idx_acc} name={idx_name} value={idx_value} disc={idx_disc}")
 
-                ticker = name_to_ticker_map(name)
-                if not ticker: continue
-
-                # Store under both formats
-                fund_holdings.setdefault(accnum, []).append({
-                    "ticker": ticker, "name": name, "value": value
-                })
-                fund_holdings.setdefault(accnum_nodash, []).append({
-                    "ticker": ticker, "name": name, "value": value
-                })
-            except: continue
-
-        log(f"   Parsed holdings in {len(fund_holdings)} unique accessions")
-        # Debug: show first few accession numbers from INFOTABLE
-        sample_accs = list(fund_holdings.keys())[:5]
-        log(f"   Sample INFOTABLE accessions: {sample_accs}")
-        log(f"   Fund accessions looking for: {list(fund_accessions.keys())[:5]}")
-
-        # Now get submission metadata to identify top fund names
-        # Use EDGAR submissions API for our known funds
-        fund_accessions = {}  # cik -> accession_number
+        # STEP 1: Get fund accession numbers FIRST
+        fund_accessions = {}
         for cik, fund_name in TOP_FUND_CIKS.items():
             try:
                 r = requests.get(
@@ -310,50 +278,80 @@ def get_sec_13f_dataset():
                 accnums = filings.get("accessionNumber",[])
                 dates   = filings.get("filingDate",[])
                 for i, form in enumerate(forms):
-                    if form in ["13F-HR","13F-HR/A"]:
-                        acc = accnums[i].replace("-","") if i<len(accnums) else ""
-                        dt  = dates[i] if i<len(dates) else ""
-                        try:
-                            if (datetime.now()-datetime.strptime(dt,"%Y-%m-%d")).days > 200: break
-                        except: break
-                        if acc:
-                            # Store both formats to match INFOTABLE
-                            acc_nodash = acc.replace("-","")
-                            acc_dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}" if len(acc)==18 else acc
-                            fund_accessions[acc_nodash] = fund_name
-                            fund_accessions[acc_dashed]  = fund_name
-                            log(f"   {fund_name}: {acc_dashed} ({dt})")
-                        break
+                    if form not in ["13F-HR","13F-HR/A"]: continue
+                    dt  = dates[i] if i<len(dates) else ""
+                    acc = accnums[i] if i<len(accnums) else ""
+                    try:
+                        if (datetime.now()-datetime.strptime(dt,"%Y-%m-%d")).days > 200: break
+                    except: break
+                    if acc:
+                        # Store both dashed and undashed
+                        fund_accessions[acc] = fund_name
+                        fund_accessions[acc.replace("-","")] = fund_name
+                        log(f"   {fund_name}: {acc} ({dt})")
+                    break
                 sleep(0.3)
             except: continue
+        log(f"   Loaded {len(fund_accessions)//2} fund accessions")
 
-        log(f"   Matched {len(fund_accessions)} top fund filings")
+        # STEP 2: Parse INFOTABLE — only rows matching our funds
+        fund_holdings = {}
+        matched_rows = 0
+        sample_values = []
 
-        # Match holdings to fund names
-        for accnum, holdings in fund_holdings.items():
-            fund_name = fund_accessions.get(accnum, None)
-            if not fund_name: continue  # only process top funds
+        for line in lines[1:]:
+            try:
+                parts = line.split("\t")
+                if len(parts) <= max(idx_acc, idx_name, idx_value): continue
+                accnum = parts[idx_acc].strip()
 
-            # Get top holdings by value
-            top_holdings = sorted(holdings, key=lambda h: h["value"], reverse=True)[:20]
-            for h in top_holdings:
-                signals.append({
-                    "ticker":        h["ticker"],
-                    "company_name":  h["name"],
-                    "signal_type":   "buy",
-                    "source":        "hedge_fund",
-                    "value_usd":     float(h["value"]),
-                    "insider_count": 1,
-                    "insider_names": fund_name,
-                    "roles":         "Hedge Fund 13F",
-                    "is_exec":       False,
-                    "trade_date":    str(datetime.now().date()),
-                    "score":         calc_score(1, h["value"], False, bonus=5),
-                    "sector":        SECTOR_MAP.get(h["ticker"],"Other"),
-                })
+                # Only process rows from our target funds
+                fund_name = fund_accessions.get(accnum) or fund_accessions.get(accnum.replace("-",""))
+                if not fund_name: continue
+                matched_rows += 1
+
+                name      = parts[idx_name].strip() if len(parts)>idx_name else ""
+                value_raw = parts[idx_value].strip() if len(parts)>idx_value else ""
+                value     = int(value_raw) if value_raw.isdigit() else 0
+
+                # Log first few matched values to debug scale
+                if len(sample_values) < 5 and value > 0:
+                    sample_values.append(f"{name[:30]}={value}")
+
+                # Post-2023: values in dollars (not thousands)
+                # Skip tiny positions
+                if value < 100_000: continue
+
+                ticker = name_to_ticker_map(name)
+                if not ticker: continue
+
+                fund_holdings.setdefault(accnum, {}).setdefault(fund_name, []).append(
+                    {"ticker":ticker,"name":name,"value":value}
+                )
+            except: continue
+
+        log(f"   Matched {matched_rows} rows for our funds")
+        log(f"   Sample values: {sample_values}")
+        log(f"   Holdings dict keys: {list(fund_holdings.keys())[:3]}")
+
+        # STEP 3: Build signals
+        for accnum, funds in fund_holdings.items():
+            for fund_name, holdings in funds.items():
+                top = sorted(holdings, key=lambda h:h["value"], reverse=True)[:20]
+                for h in top:
+                    signals.append({
+                        "ticker":h["ticker"],"company_name":h["name"],
+                        "signal_type":"buy","source":"hedge_fund",
+                        "value_usd":float(h["value"]),"insider_count":1,
+                        "insider_names":fund_name,"roles":"Hedge Fund 13F",
+                        "is_exec":False,"trade_date":str(datetime.now().date()),
+                        "score":calc_score(1,h["value"],False,bonus=5),
+                        "sector":SECTOR_MAP.get(h["ticker"],"Other"),
+                    })
 
     except Exception as e:
         log(f"   Parse error: {e}")
+        import traceback; log(traceback.format_exc()[:800])
 
     log(f"   → {len(signals)} hedge fund signals")
     return signals
