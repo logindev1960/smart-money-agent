@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Money Agent</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap');
+:root {
+  --bg:#0a0a0f;--bg2:#111118;--bg3:#16161f;--border:#1e1e2e;--border2:#2a2a3e;
+  --text:#e8e8f0;--muted:#6b6b8a;--accent:#7c6af7;--accent2:#a594f9;
+  --green:#22c55e;--red:#ef4444;--amber:#f59e0b;--teal:#14b8a6;
+  --mono:'DM Mono',monospace;--sans:'Syne',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(124,106,247,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(124,106,247,.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0;}
+.wrap{position:relative;z-index:1;max-width:1400px;margin:0 auto;padding:0 24px;}
+header{border-bottom:1px solid var(--border);padding:16px 0;position:sticky;top:0;background:rgba(10,10,15,.95);backdrop-filter:blur(12px);z-index:100;}
+.hdr{display:flex;align-items:center;justify-content:space-between;}
+.logo{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:800;letter-spacing:-.5px;}
+.logo-dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent);animation:pulse 2s infinite;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.7;transform:scale(1.2)}}
+.hdr-r{display:flex;align-items:center;gap:10px;}
+.live-badge{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--green);border:1px solid rgba(34,197,94,.3);padding:4px 10px;border-radius:20px;background:rgba(34,197,94,.05);}
+.live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 1.5s infinite;}
+.btn{font-family:var(--sans);font-size:13px;font-weight:600;padding:8px 14px;border-radius:8px;cursor:pointer;border:1px solid var(--border2);background:var(--bg3);color:var(--text);transition:all .2s;}
+.btn:hover{border-color:var(--accent);color:var(--accent2);}
+.btn-p{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn-p:hover{background:var(--accent2);border-color:var(--accent2);}
+.btn:disabled{opacity:.4;cursor:not-allowed;}
+
+/* Setup */
+.setup{background:linear-gradient(135deg,rgba(124,106,247,.1),rgba(165,148,249,.04));border:1px solid rgba(124,106,247,.25);border-radius:14px;padding:22px;margin:22px 0;}
+.setup-title{font-size:14px;font-weight:700;color:var(--accent2);margin-bottom:6px;}
+.setup-sub{font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.7;}
+.setup-sub a{color:var(--accent2);}
+.key-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;}
+.key-input{flex:1;min-width:220px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:13px;color:var(--text);outline:none;}
+.key-input:focus{border-color:var(--accent);}
+.kstat{font-family:var(--mono);font-size:11px;padding:4px 10px;border-radius:6px;}
+.kstat.ok{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.2);}
+.kstat.err{background:rgba(239,68,68,.1);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+.kstat.idle{background:var(--bg3);color:var(--muted);border:1px solid var(--border);}
+.progress-wrap{display:none;margin:14px 0 0;}
+.progress-wrap.on{display:block;}
+.progress-label{font-family:var(--mono);font-size:11px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;}
+.progress-bar{height:4px;background:var(--bg3);border-radius:2px;overflow:hidden;}
+.progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));border-radius:2px;transition:width .4s;}
+
+/* Stats */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:20px 0;}
+@media(max-width:900px){.stats-row{grid-template-columns:repeat(2,1fr);}}
+.sc{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px 20px;position:relative;overflow:hidden;}
+.sc::after{content:'';position:absolute;top:0;left:0;right:0;height:2px;}
+.sc.pu::after{background:var(--accent);}
+.sc.gr::after{background:var(--green);}
+.sc.am::after{background:var(--amber);}
+.sc.te::after{background:var(--teal);}
+.slbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}
+.sval{font-size:28px;font-weight:800;line-height:1;}
+.ssub{font-size:12px;color:var(--muted);margin-top:4px;}
+
+/* Layout */
+.main-grid{display:grid;grid-template-columns:1fr 340px;gap:16px;margin-bottom:20px;}
+@media(max-width:1100px){.main-grid{grid-template-columns:1fr;}}
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+.ph{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.pt{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--muted);}
+
+/* Tabs */
+.tabs{display:flex;border-bottom:1px solid var(--border);padding:0 16px;overflow-x:auto;}
+.tab{font-family:var(--sans);font-size:12px;font-weight:600;padding:11px 14px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all .2s;background:none;border-top:none;border-left:none;border-right:none;white-space:nowrap;}
+.tab.active{color:var(--accent2);border-bottom-color:var(--accent);}
+.tab:hover:not(.active){color:var(--text);}
+.fbar{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+.fsearch{flex:1;min-width:130px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-family:var(--mono);font-size:12px;color:var(--text);outline:none;}
+.fsearch:focus{border-color:var(--accent);}
+.fbtn{font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s;}
+.fbtn.active,.fbtn:hover{border-color:var(--accent);color:var(--accent2);background:rgba(124,106,247,.08);}
+
+/* Table */
+.tscroll{overflow-x:auto;max-height:460px;overflow-y:auto;}
+.tscroll::-webkit-scrollbar{width:4px;height:4px;}
+.tscroll::-webkit-scrollbar-track{background:var(--bg2);}
+.tscroll::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+table{width:100%;border-collapse:collapse;}
+th{font-family:var(--mono);font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:1px;color:var(--muted);padding:9px 14px;text-align:left;border-bottom:1px solid var(--border);background:var(--bg3);white-space:nowrap;}
+td{padding:11px 14px;border-bottom:1px solid rgba(30,30,46,.5);font-size:12px;vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+tbody tr{cursor:pointer;transition:background .15s;}
+tbody tr:hover td{background:rgba(124,106,247,.04);}
+.tbadge{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--accent2);background:rgba(124,106,247,.1);padding:3px 8px;border-radius:6px;border:1px solid rgba(124,106,247,.2);}
+.stag{font-family:var(--mono);font-size:10px;padding:2px 6px;border-radius:4px;display:inline-block;margin:1px;}
+.stag.insider{background:rgba(34,197,94,.1);color:var(--green);border:1px solid rgba(34,197,94,.2);}
+.stag.cluster{background:rgba(245,158,11,.1);color:var(--amber);border:1px solid rgba(245,158,11,.2);}
+.stag.mega{background:rgba(20,184,166,.1);color:var(--teal);border:1px solid rgba(20,184,166,.2);}
+.type-buy{background:rgba(34,197,94,.1);color:var(--green);font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;text-transform:uppercase;}
+.type-sell{background:rgba(239,68,68,.1);color:var(--red);font-size:10px;font-weight:600;padding:2px 7px;border-radius:4px;text-transform:uppercase;}
+.swrap{display:flex;align-items:center;gap:6px;}
+.sbar{width:50px;height:5px;border-radius:3px;background:var(--bg3);overflow:hidden;}
+.sfill{height:100%;border-radius:3px;}
+.snum{font-family:var(--mono);font-size:11px;font-weight:500;}
+.sh{color:var(--green);}
+.smid{color:var(--amber);}
+.sl{color:var(--muted);}
+
+/* AI panel */
+.ai-panel{margin:12px 16px 16px;background:var(--bg3);border:1px solid rgba(124,106,247,.15);border-radius:10px;padding:14px;}
+.ai-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.ai-chip{font-family:var(--mono);font-size:10px;background:rgba(124,106,247,.15);color:var(--accent2);padding:3px 8px;border-radius:4px;border:1px solid rgba(124,106,247,.3);}
+.ai-body{font-size:13px;line-height:1.65;color:var(--text);}
+.ai-ph{color:var(--muted);font-style:italic;font-size:12px;}
+.ai-spin{display:none;align-items:center;gap:8px;font-size:12px;color:var(--muted);}
+.ai-spin.on{display:flex;}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--border2);border-top-color:var(--accent);animation:spin .8s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Top Picks Sidebar ── */
+.picks-panel{display:flex;flex-direction:column;gap:0;}
+.pick-item{padding:14px 16px;border-bottom:1px solid rgba(30,30,46,.5);cursor:pointer;transition:background .15s;position:relative;}
+.pick-item:hover{background:rgba(124,106,247,.05);}
+.pick-item:last-child{border-bottom:none;}
+.pick-rank{font-family:var(--mono);font-size:10px;color:var(--muted);position:absolute;top:14px;right:14px;}
+.pick-top{display:flex;align-items:center;gap:8px;margin-bottom:4px;}
+.pick-ticker{font-family:var(--mono);font-size:14px;font-weight:500;color:var(--accent2);}
+.pick-name{font-size:11px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px;}
+.pick-price{font-family:var(--mono);font-size:12px;text-align:right;}
+.pick-change{font-family:var(--mono);font-size:11px;}
+.pick-meta{display:flex;align-items:center;gap:6px;margin-top:4px;}
+.pick-score-bar{flex:1;height:3px;background:var(--bg3);border-radius:2px;overflow:hidden;}
+.pick-score-fill{height:100%;border-radius:2px;}
+.pick-tags{display:flex;gap:3px;}
+.pick-loading{padding:20px 16px;text-align:center;color:var(--muted);font-size:12px;}
+
+/* Sources panel */
+.sg{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 16px;}
+.si{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:8px;cursor:pointer;}
+.si:hover{border-color:var(--border2);}
+.sd{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.dok{background:var(--green);box-shadow:0 0 6px var(--green);}
+.dwarn{background:var(--amber);}
+.sn{font-size:12px;font-weight:600;}
+.sm2{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:1px;}
+
+/* Bottom */
+.bg2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px;}
+@media(max-width:800px){.bg2{grid-template-columns:1fr;}}
+.hm{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;padding:12px 16px;}
+.hmc{padding:8px 4px;border-radius:6px;text-align:center;font-family:var(--mono);font-size:10px;cursor:pointer;transition:transform .15s;}
+.hmc:hover{transform:scale(1.08);}
+.h0{background:var(--bg3);color:var(--muted);}
+.h1{background:rgba(34,197,94,.1);color:var(--green);}
+.h2{background:rgba(34,197,94,.22);color:var(--green);}
+.h3{background:rgba(34,197,94,.4);color:#fff;}
+.h4{background:rgba(34,197,94,.6);color:#fff;}
+.h5{background:var(--green);color:#000;}
+.di{padding:10px 16px;border-bottom:1px solid rgba(30,30,46,.5);font-size:12px;line-height:1.6;}
+.di:last-child{border-bottom:none;}
+
+/* ── Stock Detail Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;display:flex;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px);}
+.modal-overlay.hidden{display:none;}
+.modal{background:var(--bg2);border:1px solid var(--border2);border-radius:18px;width:100%;max-width:680px;max-height:88vh;overflow-y:auto;position:relative;}
+.modal::-webkit-scrollbar{width:4px;}
+.modal::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px;}
+.modal-close{position:absolute;top:16px;right:16px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-family:var(--sans);font-weight:600;transition:all .2s;z-index:10;}
+.modal-close:hover{color:var(--text);border-color:var(--border2);}
+.modal-header{padding:24px 24px 16px;}
+.modal-ticker{font-family:var(--mono);font-size:28px;font-weight:800;color:var(--accent2);letter-spacing:-1px;}
+.modal-name{font-size:14px;color:var(--muted);margin-top:4px;}
+.modal-price-row{display:flex;align-items:baseline;gap:12px;margin-top:12px;}
+.modal-price{font-family:var(--mono);font-size:32px;font-weight:800;}
+.modal-change{font-family:var(--mono);font-size:16px;font-weight:500;}
+.modal-body{padding:0 24px 24px;}
+
+/* Metric cards */
+.metric-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px;}
+@media(max-width:500px){.metric-grid{grid-template-columns:repeat(2,1fr);}}
+.metric-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px;}
+.metric-label{font-size:11px;color:var(--muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px;}
+.metric-value{font-family:var(--mono);font-size:16px;font-weight:500;color:var(--text);}
+.metric-sub{font-size:11px;color:var(--muted);margin-top:2px;}
+
+/* RSI gauge */
+.rsi-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;}
+.rsi-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;justify-content:space-between;}
+.rsi-track{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--green) 0%,var(--amber) 40%,var(--amber) 60%,var(--red) 100%);position:relative;margin-bottom:6px;}
+.rsi-thumb{width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--bg2);position:absolute;top:50%;transform:translate(-50%,-50%);transition:left .5s;box-shadow:0 0 6px rgba(0,0,0,.4);}
+.rsi-zones{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--muted);}
+
+/* Analyst consensus */
+.consensus-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;}
+.consensus-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;}
+.consensus-bars{display:flex;flex-direction:column;gap:6px;}
+.cbar-row{display:flex;align-items:center;gap:8px;}
+.cbar-label{font-size:11px;color:var(--muted);min-width:70px;}
+.cbar-track{flex:1;height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;}
+.cbar-fill{height:100%;border-radius:3px;transition:width .6s;}
+.cbar-count{font-family:var(--mono);font-size:11px;min-width:24px;text-align:right;}
+.consensus-verdict{display:flex;align-items:center;gap:10px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);}
+.verdict-badge{font-size:12px;font-weight:700;padding:4px 12px;border-radius:6px;}
+.verdict-buy{background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.2);}
+.verdict-hold{background:rgba(245,158,11,.15);color:var(--amber);border:1px solid rgba(245,158,11,.2);}
+.verdict-sell{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.2);}
+
+/* Insider breakdown */
+.insider-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;}
+.insider-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;}
+.insider-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(30,30,46,.4);}
+.insider-row:last-child{border-bottom:none;}
+.insider-name{font-size:12px;flex:1;}
+.insider-role{font-size:10px;color:var(--muted);font-family:var(--mono);}
+.insider-val{font-family:var(--mono);font-size:11px;color:var(--green);}
+
+/* News */
+.news-wrap{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;}
+.news-title{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;}
+.news-item{padding:8px 0;border-bottom:1px solid rgba(30,30,46,.4);}
+.news-item:last-child{border-bottom:none;}
+.news-headline{font-size:12px;line-height:1.5;color:var(--text);cursor:pointer;}
+.news-headline:hover{color:var(--accent2);}
+.news-meta{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:3px;}
+
+/* AI in modal */
+.modal-ai{background:rgba(124,106,247,.06);border:1px solid rgba(124,106,247,.15);border-radius:10px;padding:14px;}
+.modal-ai-hdr{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.modal-ai-body{font-size:13px;line-height:1.65;color:var(--text);}
+.modal-ai-ph{color:var(--muted);font-size:12px;font-style:italic;}
+
+/* Misc */
+.skel{background:linear-gradient(90deg,var(--bg3) 25%,var(--border) 50%,var(--bg3) 75%);background-size:200% 100%;animation:shim 1.5s infinite;border-radius:4px;height:14px;}
+@keyframes shim{0%{background-position:200%}100%{background-position:-200%}}
+.toast{position:fixed;bottom:24px;right:24px;background:var(--bg3);border:1px solid var(--border2);border-radius:10px;padding:11px 16px;font-size:13px;z-index:999;transform:translateY(80px);opacity:0;transition:all .3s;pointer-events:none;max-width:320px;line-height:1.5;}
+.toast.show{transform:translateY(0);opacity:1;}
+.empty{padding:32px 16px;text-align:center;color:var(--muted);font-size:13px;line-height:1.7;}
+.bcnt{background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:8px;margin-left:4px;}
+.up{color:var(--green);}
+.dn{color:var(--red);}
+.raw-count{font-family:var(--mono);font-size:11px;color:var(--muted);padding:6px 16px;border-bottom:1px solid var(--border);background:var(--bg3);}
+.raw-count span{color:var(--accent2);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap hdr">
+    <div class="logo"><div class="logo-dot"></div>Smart Money Agent</div>
+    <div class="hdr-r">
+      <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+      <button class="btn" onclick="startLoad()" id="refreshBtn">↻ Refresh</button>
+      <button class="btn btn-p" onclick="runAI()">✦ AI Analysis</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" style="padding-top:20px">
+
+  <div class="setup">
+    <div class="setup-title">⚙ API Setup</div>
+    <div class="setup-sub">
+      Free Finnhub key at <a href="https://finnhub.io" target="_blank">finnhub.io</a> — no credit card, instant.
+      Optional: Claude key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a> for AI reasoning.
+    </div>
+    <div class="key-row">
+      <input class="key-input" id="fhKey" type="password" placeholder="Finnhub API key"/>
+      <button class="btn btn-p" onclick="connectFH()">Connect &amp; Scan</button>
+      <span class="kstat idle" id="fhStat">not connected</span>
+    </div>
+    <div class="key-row" style="margin-top:8px;padding-top:10px;border-top:1px solid var(--border)">
+      <input class="key-input" id="clKey" type="password" placeholder="Claude API key (optional) — sk-ant-api03-..."/>
+      <button class="btn" onclick="saveClaude()">Save</button>
+      <span class="kstat idle" id="clStat">not set</span>
+    </div>
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-label"><span id="progressLabel">Loading...</span><span id="progressPct">0%</span></div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="sc pu"><div class="slbl">Raw Transactions</div><div class="sval" id="stRaw">—</div><div class="ssub">SEC Form 3/4/5</div></div>
+    <div class="sc gr"><div class="slbl">Unique Tickers</div><div class="sval" id="stTickers">—</div><div class="ssub">With insider activity</div></div>
+    <div class="sc am"><div class="slbl">Cluster Buys</div><div class="sval" id="stCluster">—</div><div class="ssub">2+ insiders same stock</div></div>
+    <div class="sc te"><div class="slbl">High Conviction</div><div class="sval" id="stHigh">—</div><div class="ssub">Score ≥ 70</div></div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- Signal feed -->
+    <div class="panel">
+      <div class="tabs">
+        <button class="tab active" onclick="setTab('all',this)">All Buys</button>
+        <button class="tab" onclick="setTab('cluster',this)">⚡ Cluster <span class="bcnt" id="bdCluster">0</span></button>
+        <button class="tab" onclick="setTab('mega',this)">💰 Big Money</button>
+        <button class="tab" onclick="setTab('ceo',this)">👔 Exec Buys</button>
+        <button class="tab" onclick="setTab('sell',this)">Sells</button>
+      </div>
+      <div class="fbar">
+        <input class="fsearch" placeholder="Search ticker or company..." oninput="doFilter(this.value)"/>
+        <button class="fbtn active" onclick="setSF('all',this)">All</button>
+        <button class="fbtn" onclick="setSF('high',this)">High conviction</button>
+        <button class="fbtn" onclick="setSF('recent',this)">Last 14d</button>
+      </div>
+      <div class="raw-count" id="rawCount" style="display:none">
+        Showing <span id="showCount">0</span> of <span id="totalCount">0</span> signals — click any row for full analysis
+      </div>
+      <div class="tscroll">
+        <table>
+          <thead><tr>
+            <th>Ticker</th><th>Company</th><th>Signal</th>
+            <th>Total Value</th><th>Insiders</th><th>Date</th>
+            <th>Conviction</th>
+          </tr></thead>
+          <tbody id="sigBody">
+            <tr><td colspan="7" class="empty">Connect your Finnhub key to scan the entire market for insider buying signals</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="ai-panel">
+        <div class="ai-hdr">
+          <span class="ai-chip">✦ Claude AI</span>
+          <span style="font-size:11px;color:var(--muted)" id="aiTitle">Click any row for full stock analysis</span>
+        </div>
+        <div class="ai-spin" id="aiSpin"><div class="spinner"></div>Analysing...</div>
+        <div class="ai-body ai-ph" id="aiBody">Click any signal row to open the full stock analysis panel — price, RSI, analyst consensus, insider breakdown, news, and AI reasoning.</div>
+      </div>
+    </div>
+
+    <!-- Right: Top Picks + Sources -->
+    <div style="display:flex;flex-direction:column;gap:14px;">
+
+      <!-- Top Picks panel -->
+      <div class="panel">
+        <div class="ph">
+          <span class="pt">⚡ Top Conviction Picks</span>
+          <span style="font-family:var(--mono);font-size:11px;color:var(--muted)">auto-ranked</span>
+        </div>
+        <div class="picks-panel" id="picksPanel">
+          <div class="pick-loading">Load signals to see top picks</div>
+        </div>
+      </div>
+
+      <!-- Sources -->
+      <div class="panel">
+        <div class="ph"><span class="pt">Data Sources</span></div>
+        <div class="sg" id="srcGrid">
+          <div class="si"><div class="sd dwarn"></div><div><div class="sn">Finnhub/SEC</div><div class="sm2">not connected</div></div></div>
+          <div class="si"><div class="sd dwarn"></div><div><div class="sn">Open Insider</div><div class="sm2">scraper needed</div></div></div>
+          <div class="si"><div class="sd dwarn"></div><div><div class="sn">Capitol Trades</div><div class="sm2">scraper needed</div></div></div>
+          <div class="si"><div class="sd dwarn"></div><div><div class="sn">WhaleWisdom</div><div class="sm2">scraper needed</div></div></div>
+          <div class="si"><div class="sd dwarn"></div><div><div class="sn">Claude AI</div><div class="sm2">not connected</div></div></div>
+          <div class="si"><div class="sd dwarn"></div><div><div class="sn">Analyst Data</div><div class="sm2">via Finnhub free</div></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Bottom -->
+  <div class="bg2" style="margin-bottom:28px;">
+    <div class="panel">
+      <div class="ph"><span class="pt">Sector Heatmap</span></div>
+      <div class="hm" id="hmGrid"><div class="empty" style="grid-column:span 5">Load signals to see heatmap</div></div>
+    </div>
+    <div class="panel">
+      <div class="ph">
+        <span class="pt">Today's Digest</span>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--muted)" id="digestDate"></span>
+      </div>
+      <div id="digestBody"><div class="empty">Load signals to generate digest</div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Stock Detail Modal ── -->
+<div class="modal-overlay hidden" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" id="modalContent">
+    <button class="modal-close" onclick="closeModalDirect()">✕ Close</button>
+
+    <div class="modal-header">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <img id="modalLogo" src="" style="width:36px;height:36px;border-radius:8px;display:none;"/>
+        <div>
+          <div class="modal-ticker" id="modalTicker">—</div>
+          <div class="modal-name" id="modalName">Loading...</div>
+        </div>
+        <div style="margin-left:auto;text-align:right">
+          <div class="modal-price" id="modalPrice">—</div>
+          <div class="modal-change" id="modalChange">—</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;" id="modalTags"></div>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- Key metrics -->
+      <div class="metric-grid" id="metricGrid">
+        <div class="metric-card"><div class="metric-label">Market Cap</div><div class="metric-value" id="mktCap">—</div></div>
+        <div class="metric-card"><div class="metric-label">P/E Ratio</div><div class="metric-value" id="peRatio">—</div></div>
+        <div class="metric-card"><div class="metric-label">52W High</div><div class="metric-value" id="w52High">—</div></div>
+        <div class="metric-card"><div class="metric-label">52W Low</div><div class="metric-value" id="w52Low">—</div></div>
+        <div class="metric-card"><div class="metric-label">Beta</div><div class="metric-value" id="beta">—</div></div>
+        <div class="metric-card"><div class="metric-label">Industry</div><div class="metric-value" id="industry" style="font-size:12px">—</div></div>
+      </div>
+
+      <!-- RSI -->
+      <div class="rsi-wrap">
+        <div class="rsi-label"><span>RSI (14-day)</span><span id="rsiValue" style="font-family:var(--mono);font-size:13px;color:var(--text)">—</span></div>
+        <div class="rsi-track"><div class="rsi-thumb" id="rsiThumb" style="left:50%"></div></div>
+        <div class="rsi-zones"><span style="color:var(--green)">Oversold &lt;30</span><span>Neutral</span><span style="color:var(--red)">Overbought &gt;70</span></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:8px;" id="rsiVerdict">—</div>
+      </div>
+
+      <!-- Analyst consensus -->
+      <div class="consensus-wrap">
+        <div class="consensus-title">Analyst Consensus (all rated analysts)</div>
+        <div class="consensus-bars" id="consensusBars">
+          <div style="color:var(--muted);font-size:12px">Loading analyst data...</div>
+        </div>
+        <div class="consensus-verdict" id="consensusVerdict" style="display:none">
+          <span id="verdictBadge" class="verdict-badge">—</span>
+          <span id="verdictText" style="font-size:12px;color:var(--muted)">—</span>
+        </div>
+      </div>
+
+      <!-- Insider breakdown -->
+      <div class="insider-wrap">
+        <div class="insider-title">Insider Buying Activity (last 90 days)</div>
+        <div id="insiderBreakdown"><div style="color:var(--muted);font-size:12px">Loading...</div></div>
+      </div>
+
+      <!-- Recent news -->
+      <div class="news-wrap">
+        <div class="news-title">Recent News</div>
+        <div id="newsItems"><div style="color:var(--muted);font-size:12px">Loading news...</div></div>
+      </div>
+
+      <!-- AI reasoning -->
+      <div class="modal-ai">
+        <div class="modal-ai-hdr">
+          <span class="ai-chip">✦ Claude AI Reasoning</span>
+          <span style="font-size:11px;color:var(--muted)" id="modalAiStatus">—</span>
+        </div>
+        <div class="ai-spin" id="modalAiSpin"><div class="spinner"></div>Synthesising all data...</div>
+        <div class="modal-ai-body modal-ai-ph" id="modalAiBody">—</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ─────────────────────────────────────────────────
+let FH = '', CL = '';
+let allSignals = [], rawTxns = [];
+let tabFilter = 'all', scoreFilter = 'all', searchStr = '';
+let companyCache = {}; // ticker -> {name, logo, industry, mktCap}
+
+const SECTOR_MAP = {
+  NVDA:'Semis',META:'Tech',MSFT:'Tech',GOOGL:'Tech',AMZN:'Tech',AAPL:'Tech',
+  TSLA:'Auto',GEV:'Energy',VST:'Energy',XOM:'Energy',CVX:'Energy',
+  NVO:'Health',LLY:'Health',ABBV:'Health',UNH:'Health',JNJ:'Health',
+  PLTR:'Defense',AXON:'Defense',CRWD:'Cybersec',PANW:'Cybersec',
+  MSTR:'Crypto',COIN:'Crypto',JPM:'Finance',GS:'Finance',BAC:'Finance',
+  ARM:'Semis',AVGO:'Semis',AMD:'Semis',WMT:'Retail',COST:'Retail',
+  NFLX:'Media',UBER:'Tech',PYPL:'Fintech',SQ:'Fintech',V:'Finance',MA:'Finance'
+};
+
+const EXEC_ROLES = ['ceo','cfo','coo','president','chairman','director','officer','svp','evp','vp'];
+
+const SCAN_TICKERS = [
+  'NVDA','META','MSFT','GOOGL','AMZN','AAPL','JPM','GS','LLY',
+  'ABBV','ARM','AVGO','AMD','PANW','CRWD','PLTR','AXON','GEV','VST',
+  'NVO','COIN','MSTR','XOM','CVX','WMT','COST','BAC','V','MA',
+  'UNH','JNJ','PFE','MRK','NFLX','DIS','UBER','ABNB','SQ','PYPL','TSLA',
+  'IONQ','RGTI','SMCI','SOFI','AFRM','UPST','RKLB','ASTS','MRVL','SNOW',
+  'NET','DDOG','ZS','OKTA','S','GTLB','REGN','BIIB','MRNA','BMY',
+  'CEG','NRG','AES','ETR','EXC','PCG','MS','C','WFC','BLK',
+  'SCHW','ICE','CME','LMT','RTX','NOC','GD','BA','CAT','DE',
+  'HON','GE','NKE','LULU','SBUX','MCD','TGT','CMCSA','SPOT','BKNG'
+];
+
+// ── Boot ──────────────────────────────────────────────────
+window.onload = () => {
+  document.getElementById('digestDate').textContent =
+    new Date().toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});
+  const fk = localStorage.getItem('sm_fh');
+  const ck = localStorage.getItem('sm_cl');
+  if(fk){ document.getElementById('fhKey').value=fk; FH=fk; connectFH(); }
+  if(ck){ document.getElementById('clKey').value=ck; CL=ck; setKstat('clStat','✓ loaded','ok'); }
+};
+
+// ── Connect ───────────────────────────────────────────────
+async function connectFH() {
+  const k = document.getElementById('fhKey').value.trim();
+  if(!k){ toast('Paste your Finnhub key first'); return; }
+  FH = k;
+  setKstat('fhStat','testing...','idle');
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=AAPL&token=${FH}`);
+    const d = await r.json();
+    if(d.c > 0){
+      localStorage.setItem('sm_fh', FH);
+      setKstat('fhStat','✓ connected','ok');
+      startLoad();
+    } else { setKstat('fhStat','✗ invalid key','err'); }
+  } catch(e){ setKstat('fhStat','✗ failed','err'); }
+}
+
+// ── Main loader ───────────────────────────────────────────
+async function startLoad() {
+  if(!FH){ toast('Connect Finnhub first'); return; }
+  document.getElementById('refreshBtn').disabled = true;
+  allSignals = []; rawTxns = []; companyCache = {};
+  showProgress(true, 'Scanning market for insider activity...', 5);
+  updSrc(false);
+
+  const to = new Date(), from = new Date();
+  from.setDate(from.getDate() - 90);
+  const toStr = fmtDate(to), fromStr = fmtDate(from);
+
+  // Try blank-symbol endpoint first
+  try {
+    setProgress('Pulling full market insider feed...', 15);
+    const r = await fetch(`https://finnhub.io/api/v1/stock/insider-transactions?from=${fromStr}&to=${toStr}&token=${FH}`);
+    const d = await r.json();
+    if(d.data && d.data.length > 10){
+      rawTxns = d.data;
+      animN('stRaw', rawTxns.length);
+      setProgress(`Processing ${rawTxns.length} transactions...`, 50);
+      await sleep(100);
+      await groupAndScore(rawTxns);
+      setProgress('Enriching company data...', 75);
+      await enrichTopSignals();
+      finishLoad();
+      return;
+    }
+  } catch(e){ console.warn('Blank symbol failed, falling back', e); }
+
+  // Fallback: scan ticker list
+  toast('Scanning 100 tickers individually...');
+  let done = 0;
+  for(const ticker of SCAN_TICKERS){
+    setProgress(`Fetching ${ticker}...`, Math.round((done/SCAN_TICKERS.length)*85));
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/stock/insider-transactions?symbol=${ticker}&from=${fromStr}&to=${toStr}&token=${FH}`);
+      const d = await r.json();
+      if(d.data && d.data.length) rawTxns.push(...d.data.map(tx=>({...tx,symbol:ticker})));
+    } catch(e){}
+    done++;
+    await sleep(700);
+  }
+  animN('stRaw', rawTxns.length);
+  setProgress('Processing signals...', 88);
+  await groupAndScore(rawTxns);
+  setProgress('Enriching company data...', 92);
+  await enrichTopSignals();
+  finishLoad();
+}
+
+function finishLoad() {
+  showProgress(false);
+  document.getElementById('refreshBtn').disabled = false;
+  updSrc(true);
+  updateStats();
+  renderHeatmap();
+  renderDigest();
+  renderTopPicks();
+  toast(`Done — ${allSignals.length} tickers with insider buying ✓`);
+}
+
+// ── Group & score ─────────────────────────────────────────
+async function groupAndScore(txns) {
+  const byTicker = {};
+  txns.forEach(tx => {
+    const sym = (tx.symbol || tx.issuerTicker || '').trim();
+    if(!sym || sym.length > 5 || sym.includes('.')) return;
+    if(!byTicker[sym]) byTicker[sym] = [];
+    byTicker[sym].push(tx);
+  });
+
+  allSignals = [];
+  Object.entries(byTicker).forEach(([ticker, txs]) => {
+    const buys = txs.filter(tx => tx.transactionCode==='P' || (tx.change>0 && !['S','D','F','M','X'].includes(tx.transactionCode)));
+    const sells = txs.filter(tx => tx.transactionCode==='S' && tx.change<0);
+
+    if(buys.length > 0){
+      const totalVal = buys.reduce((s,tx)=>s+Math.abs((tx.share||tx.change||0)*(tx.price||0)),0);
+      const names = [...new Set(buys.map(tx=>tx.name||'Unknown'))];
+      const roles = [...new Set(buys.map(tx=>(tx.position||tx.title||'').toLowerCase()))].filter(r=>r).slice(0,4);
+      const isExec = roles.some(r=>EXEC_ROLES.some(e=>r.includes(e)));
+      const latest = buys.sort((a,b)=>new Date(b.transactionDate||b.filingDate)-new Date(a.transactionDate||a.filingDate))[0];
+      const tags = ['insider'];
+      if(buys.length>=2) tags.push('cluster');
+      if(totalVal>=1e6) tags.push('mega');
+      allSignals.push({
+        ticker, type:'buy', sources:tags,
+        rawVal:totalVal, value:fmtMoney(totalVal),
+        insiders:names, roles, isExec, insiderCount:buys.length,
+        date:latest.transactionDate||latest.filingDate||'—',
+        score:calcScore(buys.length,totalVal,isExec),
+        sector:SECTOR_MAP[ticker]||'Other',
+        rawBuys:buys
+      });
+    }
+    if(sells.length>=2){
+      const totalVal = sells.reduce((s,tx)=>s+Math.abs((tx.share||tx.change||0)*(tx.price||0)),0);
+      const names = [...new Set(sells.map(tx=>tx.name||'Unknown'))];
+      const latest = sells.sort((a,b)=>new Date(b.transactionDate||b.filingDate)-new Date(a.transactionDate||a.filingDate))[0];
+      allSignals.push({
+        ticker, type:'sell', sources:['insider'],
+        rawVal:totalVal, value:fmtMoney(totalVal),
+        insiders:names, roles:[], isExec:false, insiderCount:sells.length,
+        date:latest.transactionDate||latest.filingDate||'—',
+        score:Math.round(calcScore(sells.length,totalVal,false)*0.5),
+        sector:SECTOR_MAP[ticker]||'Other', rawBuys:[]
+      });
+    }
+  });
+
+  allSignals.sort((a,b)=>b.score-a.score);
+  animN('stTickers', Object.keys(byTicker).length);
+  renderSignals();
+
+  const rc = document.getElementById('rawCount');
+  rc.style.display = 'block';
+  document.getElementById('showCount').textContent = allSignals.length;
+  document.getElementById('totalCount').textContent = allSignals.length;
+}
+
+// ── Enrich top signals with company names ─────────────────
+async function enrichTopSignals() {
+  const top = allSignals.slice(0, 20);
+  for(const sig of top){
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${sig.ticker}&token=${FH}`);
+      const d = await r.json();
+      if(d.name){
+        companyCache[sig.ticker] = {
+          name: d.name,
+          logo: d.logo,
+          industry: d.finnhubIndustry || sig.sector,
+          mktCap: d.marketCapitalization
+        };
+        sig.companyName = d.name;
+      }
+    } catch(e){}
+    await sleep(500);
+  }
+  renderSignals();
+  renderTopPicks();
+}
+
+// ── Render signals table ──────────────────────────────────
+function renderSignals() {
+  const body = document.getElementById('sigBody');
+  document.getElementById('bdCluster').textContent = allSignals.filter(s=>s.type==='buy'&&s.insiderCount>=2).length;
+
+  let f = allSignals.filter(s => {
+    if(tabFilter==='all' && s.type!=='buy') return false;
+    if(tabFilter==='cluster' && (s.type!=='buy'||s.insiderCount<2)) return false;
+    if(tabFilter==='mega' && (s.type!=='buy'||s.rawVal<1e6)) return false;
+    if(tabFilter==='ceo' && (s.type!=='buy'||!s.isExec)) return false;
+    if(tabFilter==='sell' && s.type!=='sell') return false;
+    if(scoreFilter==='high' && s.score<65) return false;
+    if(scoreFilter==='recent' && (new Date()-new Date(s.date))/86400000>14) return false;
+    if(searchStr && !s.ticker.toLowerCase().includes(searchStr) &&
+       !(s.companyName||'').toLowerCase().includes(searchStr)) return false;
+    return true;
+  });
+
+  document.getElementById('showCount').textContent = f.length;
+
+  if(!f.length){
+    body.innerHTML = `<tr><td colspan="7" class="empty">${allSignals.length?'No signals match filters':'Load data first'}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = f.slice(0,200).map(s => {
+    const sc = s.score>=70?'sh':s.score>=45?'smid':'sl';
+    const bc = s.score>=70?'var(--green)':s.score>=45?'var(--amber)':'var(--muted)';
+    const tags = s.sources.map(src=>`<span class="stag ${src}">${src}</span>`).join('');
+    const ins = s.insiders?.slice(0,2).map(n=>n.split(' ').slice(-1)[0]).join(', ')+(s.insiderCount>2?` +${s.insiderCount-2}`:'');
+    const co = companyCache[s.ticker]?.name || s.companyName || '';
+    const coShort = co.length > 20 ? co.substring(0,20)+'…' : co;
+    return `<tr onclick="openModal('${s.ticker}')">
+      <td><span class="tbadge">${s.ticker}</span></td>
+      <td style="color:var(--muted);font-size:11px">${coShort}</td>
+      <td>${tags}<span class="type-${s.type}" style="margin-left:4px">${s.type}</span></td>
+      <td style="font-family:var(--mono)">${s.value}</td>
+      <td style="font-size:11px;color:var(--muted)">${ins||'—'}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--muted)">${s.date}</td>
+      <td><div class="swrap"><div class="sbar"><div class="sfill" style="width:${s.score}%;background:${bc}"></div></div><span class="snum ${sc}">${s.score}</span></div></td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Top Picks sidebar ─────────────────────────────────────
+function renderTopPicks() {
+  const panel = document.getElementById('picksPanel');
+  const top = allSignals.filter(s=>s.type==='buy').slice(0,8);
+  if(!top.length){ panel.innerHTML='<div class="pick-loading">Load signals to see top picks</div>'; return; }
+
+  panel.innerHTML = top.map((s,i) => {
+    const medal = ['🥇','🥈','🥉'][i] || `#${i+1}`;
+    const bc = s.score>=70?'var(--green)':s.score>=45?'var(--amber)':'var(--muted)';
+    const co = companyCache[s.ticker]?.name || s.companyName || s.sector;
+    const tags = s.sources.map(src=>`<span class="stag ${src}" style="font-size:9px;padding:1px 4px">${src[0].toUpperCase()}</span>`).join('');
+    const logo = companyCache[s.ticker]?.logo;
+    const logoHtml = logo ? `<img src="${logo}" style="width:20px;height:20px;border-radius:4px;flex-shrink:0;" onerror="this.style.display='none'"/>` : '';
+    return `<div class="pick-item" onclick="openModal('${s.ticker}')">
+      <span class="pick-rank">${medal}</span>
+      <div class="pick-top">
+        ${logoHtml}
+        <span class="pick-ticker">${s.ticker}</span>
+        <span class="pick-name">${co}</span>
+      </div>
+      <div class="pick-meta">
+        <div class="pick-score-bar"><div class="pick-score-fill" style="width:${s.score}%;background:${bc}"></div></div>
+        <span class="snum ${s.score>=70?'sh':s.score>=45?'smid':'sl'}" style="font-size:11px">${s.score}</span>
+        <div class="pick-tags">${tags}</div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:3px">${s.insiderCount} insider${s.insiderCount!==1?'s':''} · ${s.value}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Stock Detail Modal ────────────────────────────────────
+async function openModal(ticker) {
+  const sig = allSignals.find(s=>s.ticker===ticker);
+  if(!sig && !FH) return;
+
+  document.getElementById('modalOverlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+
+  // Set basic info immediately
+  document.getElementById('modalTicker').textContent = ticker;
+  document.getElementById('modalName').textContent = companyCache[ticker]?.name || 'Loading...';
+  document.getElementById('modalPrice').textContent = '...';
+  document.getElementById('modalChange').textContent = '';
+  document.getElementById('modalTags').innerHTML = sig ? sig.sources.map(s=>`<span class="stag ${s}">${s}</span>`).join('') + `<span class="stag" style="background:rgba(124,106,247,.1);color:var(--accent2);border:1px solid rgba(124,106,247,.2)">score ${sig.score}/100</span>` : '';
+
+  // Reset sections
+  document.getElementById('mktCap').textContent='—';
+  document.getElementById('peRatio').textContent='—';
+  document.getElementById('w52High').textContent='—';
+  document.getElementById('w52Low').textContent='—';
+  document.getElementById('beta').textContent='—';
+  document.getElementById('industry').textContent='—';
+  document.getElementById('rsiValue').textContent='—';
+  document.getElementById('rsiVerdict').textContent='—';
+  document.getElementById('rsiThumb').style.left='50%';
+  document.getElementById('consensusBars').innerHTML='<div style="color:var(--muted);font-size:12px">Loading...</div>';
+  document.getElementById('consensusVerdict').style.display='none';
+  document.getElementById('insiderBreakdown').innerHTML='<div style="color:var(--muted);font-size:12px">Loading...</div>';
+  document.getElementById('newsItems').innerHTML='<div style="color:var(--muted);font-size:12px">Loading...</div>';
+  document.getElementById('modalAiBody').textContent='—';
+  document.getElementById('modalAiBody').className='modal-ai-body modal-ai-ph';
+  document.getElementById('modalAiStatus').textContent='—';
+  document.getElementById('modalAiSpin').className='ai-spin';
+
+  // Fetch all data in parallel
+  await Promise.all([
+    loadModalQuote(ticker),
+    loadModalProfile(ticker),
+    loadModalFinancials(ticker),
+    loadModalConsensus(ticker),
+    loadModalNews(ticker)
+  ]);
+
+  // Insider breakdown
+  renderInsiderBreakdown(sig);
+
+  // AI analysis
+  if(CL && CL.startsWith('sk-ant')){
+    await loadModalAI(ticker, sig);
+  } else {
+    document.getElementById('modalAiBody').textContent = 'Add Claude API key in the setup panel to get AI-powered reasoning on this signal.';
+    document.getElementById('modalAiStatus').textContent = 'key not set';
+  }
+}
+
+async function loadModalQuote(ticker) {
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${FH}`);
+    const d = await r.json();
+    if(d.c){
+      document.getElementById('modalPrice').textContent = `$${d.c.toFixed(2)}`;
+      const chg = d.dp;
+      const el = document.getElementById('modalChange');
+      el.textContent = `${chg>0?'+':''}${chg.toFixed(2)}% today`;
+      el.className = `modal-change ${chg>=0?'up':'dn'}`;
+    }
+  } catch(e){}
+}
+
+async function loadModalProfile(ticker) {
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${ticker}&token=${FH}`);
+    const d = await r.json();
+    if(d.name){
+      document.getElementById('modalName').textContent = d.name;
+      document.getElementById('industry').textContent = d.finnhubIndustry || '—';
+      if(d.marketCapitalization){
+        document.getElementById('mktCap').textContent = fmtMoney(d.marketCapitalization*1e6);
+      }
+      if(d.logo){
+        const img = document.getElementById('modalLogo');
+        img.src = d.logo; img.style.display='block';
+        img.onerror = ()=>{ img.style.display='none'; };
+      }
+      companyCache[ticker] = { name:d.name, logo:d.logo, industry:d.finnhubIndustry, mktCap:d.marketCapitalization };
+      // Update picks panel with new name
+      renderTopPicks();
+    }
+  } catch(e){}
+}
+
+async function loadModalFinancials(ticker) {
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/stock/metric?symbol=${ticker}&metric=all&token=${FH}`);
+    const d = await r.json();
+    const m = d.metric || {};
+    if(m.peBasicExclExtraTTM) document.getElementById('peRatio').textContent = m.peBasicExclExtraTTM.toFixed(1);
+    if(m['52WeekHigh']) document.getElementById('w52High').textContent = `$${m['52WeekHigh'].toFixed(2)}`;
+    if(m['52WeekLow']) document.getElementById('w52Low').textContent = `$${m['52WeekLow'].toFixed(2)}`;
+    if(m.beta) document.getElementById('beta').textContent = m.beta.toFixed(2);
+
+    // RSI from Finnhub technical indicators
+    const rsi = m.rsi14 || m['rsiWeekly'] || null;
+    if(rsi){
+      setRSI(rsi);
+    } else {
+      // Calculate approximate RSI from price data
+      await loadRSI(ticker);
+    }
+  } catch(e){}
+}
+
+async function loadRSI(ticker) {
+  try {
+    // Get candle data to compute RSI
+    const to = Math.floor(Date.now()/1000);
+    const from = to - (30 * 86400); // 30 days
+    const r = await fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${ticker}&resolution=D&from=${from}&to=${to}&token=${FH}`);
+    const d = await r.json();
+    if(d.c && d.c.length >= 15){
+      const rsi = calcRSI(d.c, 14);
+      setRSI(rsi);
+    }
+  } catch(e){}
+}
+
+function calcRSI(prices, period=14) {
+  let gains=0, losses=0;
+  for(let i=1;i<=period;i++){
+    const diff = prices[i]-prices[i-1];
+    if(diff>0) gains+=diff; else losses+=Math.abs(diff);
+  }
+  let avgGain=gains/period, avgLoss=losses/period;
+  for(let i=period+1;i<prices.length;i++){
+    const diff=prices[i]-prices[i-1];
+    avgGain=(avgGain*(period-1)+(diff>0?diff:0))/period;
+    avgLoss=(avgLoss*(period-1)+(diff<0?Math.abs(diff):0))/period;
+  }
+  if(avgLoss===0) return 100;
+  const rs=avgGain/avgLoss;
+  return Math.round(100-(100/(1+rs)));
+}
+
+function setRSI(rsi) {
+  document.getElementById('rsiValue').textContent = rsi.toFixed(1);
+  document.getElementById('rsiThumb').style.left = `${Math.min(Math.max(rsi,0),100)}%`;
+  const el = document.getElementById('rsiVerdict');
+  if(rsi < 30){
+    el.textContent = `RSI ${rsi.toFixed(1)} — oversold territory. Technically attractive entry point.`;
+    el.style.color = 'var(--green)';
+  } else if(rsi > 70){
+    el.textContent = `RSI ${rsi.toFixed(1)} — overbought territory. Insiders buying despite elevated price may signal very strong conviction.`;
+    el.style.color = 'var(--red)';
+  } else {
+    el.textContent = `RSI ${rsi.toFixed(1)} — neutral zone. No extreme technical reading in either direction.`;
+    el.style.color = 'var(--muted)';
+  }
+}
+
+async function loadModalConsensus(ticker) {
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${ticker}&token=${FH}`);
+    const d = await r.json();
+    if(d && d.length > 0){
+      const latest = d[0]; // most recent period
+      const sb = latest.strongBuy||0, b = latest.buy||0, h = latest.hold||0, s = latest.sell||0, ss = latest.strongSell||0;
+      const total = sb+b+h+s+ss;
+      if(total === 0) return;
+
+      const bars = [
+        {label:'Strong Buy', count:sb, color:'var(--green)'},
+        {label:'Buy', count:b, color:'#86efac'},
+        {label:'Hold', count:h, color:'var(--amber)'},
+        {label:'Sell', count:s, color:'#fca5a5'},
+        {label:'Strong Sell', count:ss, color:'var(--red)'},
+      ];
+      document.getElementById('consensusBars').innerHTML = bars.map(bar=>`
+        <div class="cbar-row">
+          <span class="cbar-label">${bar.label}</span>
+          <div class="cbar-track"><div class="cbar-fill" style="width:${(bar.count/total*100).toFixed(0)}%;background:${bar.color}"></div></div>
+          <span class="cbar-count" style="color:${bar.color}">${bar.count}</span>
+        </div>`).join('');
+
+      // Verdict
+      const bullish = sb+b, bearish = s+ss;
+      const verdict = bullish > total*0.6 ? 'BUY' : bearish > total*0.4 ? 'SELL' : 'HOLD';
+      const pct = verdict==='BUY' ? Math.round(bullish/total*100) : verdict==='SELL' ? Math.round(bearish/total*100) : Math.round(h/total*100);
+      const vEl = document.getElementById('verdictBadge');
+      vEl.textContent = verdict;
+      vEl.className = `verdict-badge verdict-${verdict.toLowerCase()}`;
+      document.getElementById('verdictText').textContent = `${pct}% of ${total} analysts · Period: ${latest.period||'latest'}`;
+      document.getElementById('consensusVerdict').style.display = 'flex';
+    }
+  } catch(e){}
+}
+
+async function loadModalNews(ticker) {
+  try {
+    const to = fmtDate(new Date());
+    const from = new Date(); from.setDate(from.getDate()-14);
+    const r = await fetch(`https://finnhub.io/api/v1/company-news?symbol=${ticker}&from=${fmtDate(from)}&to=${to}&token=${FH}`);
+    const d = await r.json();
+    if(d && d.length){
+      document.getElementById('newsItems').innerHTML = d.slice(0,5).map(n=>`
+        <div class="news-item">
+          <div class="news-headline" onclick="window.open('${n.url}','_blank')">${n.headline}</div>
+          <div class="news-meta">${n.source} · ${new Date(n.datetime*1000).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</div>
+        </div>`).join('');
+    } else {
+      document.getElementById('newsItems').innerHTML = '<div style="color:var(--muted);font-size:12px">No recent news found</div>';
+    }
+  } catch(e){}
+}
+
+function renderInsiderBreakdown(sig) {
+  if(!sig || !sig.rawBuys || !sig.rawBuys.length){
+    document.getElementById('insiderBreakdown').innerHTML='<div style="color:var(--muted);font-size:12px">No data</div>';
+    return;
+  }
+  const sorted = sig.rawBuys.sort((a,b)=>Math.abs((b.share||0)*(b.price||0))-Math.abs((a.share||0)*(a.price||0)));
+  document.getElementById('insiderBreakdown').innerHTML = sorted.slice(0,6).map(tx=>{
+    const val = Math.abs((tx.share||0)*(tx.price||0));
+    const role = tx.position||tx.title||'—';
+    return `<div class="insider-row">
+      <div>
+        <div class="insider-name">${tx.name||'Unknown'}</div>
+        <div class="insider-role">${role}</div>
+      </div>
+      <div>
+        <div class="insider-val">${val>0?fmtMoney(val):'—'}</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--muted)">${tx.transactionDate||tx.filingDate||'—'}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function loadModalAI(ticker, sig) {
+  document.getElementById('modalAiSpin').className='ai-spin on';
+  document.getElementById('modalAiBody').style.display='none';
+  document.getElementById('modalAiStatus').textContent='analysing...';
+
+  const profile = companyCache[ticker] || {};
+  const rsiText = document.getElementById('rsiValue').textContent;
+  const verdictText = document.getElementById('verdictBadge').textContent || 'unknown';
+  const verdictDetail = document.getElementById('verdictText').textContent || '';
+
+  const prompt = `You are a sharp hedge fund PM. Synthesise this data on ${ticker} (${profile.name||ticker}) and give a clear investment view.
+
+INSIDER SIGNAL:
+- ${sig?.insiderCount||0} insiders bought in last 90 days
+- Total value: ${sig?.value||'unknown'}
+- Exec buying: ${sig?.isExec?'YES — CEO/CFO/Director level':'No executive level buying'}
+- Conviction score: ${sig?.score||0}/100
+
+TECHNICALS:
+- RSI (14): ${rsiText}
+- Industry: ${profile.industry||sig?.sector||'unknown'}
+- Market cap: ${fmtMoney((profile.mktCap||0)*1e6)}
+
+ANALYST CONSENSUS:
+- ${verdictText} — ${verdictDetail}
+
+Give me: (1) In one sentence, the most likely thesis insiders are acting on. (2) Whether the technicals support or contradict the insider signal. (3) The single biggest risk. (4) A one-word verdict: BUY / WATCH / AVOID. Be direct. No disclaimers.`;
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','x-api-key':CL,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:320,messages:[{role:'user',content:prompt}]})
+    });
+    const d = await r.json();
+    document.getElementById('modalAiSpin').className='ai-spin';
+    document.getElementById('modalAiBody').style.display='block';
+    document.getElementById('modalAiBody').className='modal-ai-body';
+    document.getElementById('modalAiBody').textContent=d.content?.[0]?.text||'No response.';
+    document.getElementById('modalAiStatus').textContent='analysis complete';
+  } catch(e){
+    document.getElementById('modalAiSpin').className='ai-spin';
+    document.getElementById('modalAiBody').style.display='block';
+    document.getElementById('modalAiBody').className='modal-ai-body modal-ai-ph';
+    document.getElementById('modalAiBody').textContent='Claude API error — check key.';
+    document.getElementById('modalAiStatus').textContent='error';
+  }
+}
+
+function closeModal(e){ if(e.target===document.getElementById('modalOverlay')) closeModalDirect(); }
+function closeModalDirect(){ document.getElementById('modalOverlay').classList.add('hidden'); document.body.style.overflow=''; }
+
+// ── Heatmap / Digest ──────────────────────────────────────
+function renderHeatmap(){
+  const sc={};
+  allSignals.filter(s=>s.type==='buy').forEach(s=>{sc[s.sector]=(sc[s.sector]||0)+s.insiderCount;});
+  const secs=['Tech','Semis','Energy','Health','Finance','Defense','Cybersec','Crypto','Auto','Retail'];
+  const mx=Math.max(...Object.values(sc),1);
+  document.getElementById('hmGrid').innerHTML=secs.map(s=>{
+    const c=sc[s]||0,h=c===0?0:Math.ceil((c/mx)*5);
+    return`<div class="hmc h${h}" title="${s}: ${c}">${s}<br><span style="font-size:9px">${c}</span></div>`;
+  }).join('');
+}
+
+function renderDigest(){
+  const top=allSignals.filter(s=>s.type==='buy').slice(0,6);
+  if(!top.length){document.getElementById('digestBody').innerHTML='<div class="empty">No signals loaded</div>';return;}
+  document.getElementById('digestBody').innerHTML=top.map(s=>{
+    const co=companyCache[s.ticker]?.name||s.companyName||'';
+    return`<div class="di">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+        <span class="tbadge" style="cursor:pointer" onclick="openModal('${s.ticker}')">${s.ticker}</span>
+        <span style="font-size:11px;color:var(--muted);flex:1">${co}</span>
+        <span class="snum ${s.score>=70?'sh':s.score>=45?'smid':'sl'}">${s.score}/100</span>
+      </div>
+      <div style="color:var(--muted)">${s.insiderCount} buy${s.insiderCount!==1?'s':''} · ${s.value}${s.isExec?' · 👔':''} · ${s.date}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Stats / Sources ───────────────────────────────────────
+function updateStats(){
+  animN('stCluster',allSignals.filter(s=>s.type==='buy'&&s.insiderCount>=2).length);
+  animN('stHigh',allSignals.filter(s=>s.score>=70).length);
+}
+function updSrc(ok){
+  document.getElementById('srcGrid').innerHTML=[
+    {n:'Finnhub/SEC',m:ok?'full market scan ✓':'not connected',c:ok?'dok':'dwarn',u:'https://finnhub.io'},
+    {n:'Open Insider',m:'scraper needed',c:'dwarn',u:'https://openinsider.com'},
+    {n:'Capitol Trades',m:'scraper needed',c:'dwarn',u:'https://capitoltrades.com'},
+    {n:'WhaleWisdom',m:'scraper needed',c:'dwarn',u:'https://whalewisdom.com'},
+    {n:'Claude AI',m:CL.startsWith('sk-ant')?'connected ✓':'not connected',c:CL.startsWith('sk-ant')?'dok':'dwarn',u:'https://console.anthropic.com'},
+    {n:'Analyst Data',m:ok?'via Finnhub free ✓':'not connected',c:ok?'dok':'dwarn',u:'https://finnhub.io'},
+  ].map(s=>`<div class="si" onclick="window.open('${s.u}','_blank')" style="cursor:pointer">
+    <div class="sd ${s.c}"></div><div><div class="sn">${s.n}</div><div class="sm2">${s.m}</div></div>
+  </div>`).join('');
+}
+
+// ── Filters ───────────────────────────────────────────────
+function setTab(t,el){tabFilter=t;document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));el.classList.add('active');renderSignals();}
+function setSF(f,el){scoreFilter=f;document.querySelectorAll('.fbtn').forEach(x=>x.classList.remove('active'));el.classList.add('active');renderSignals();}
+function doFilter(v){searchStr=v.toLowerCase();renderSignals();}
+function runAI(){const top=allSignals.find(s=>s.type==='buy'&&s.score>=60);if(top)openModal(top.ticker);else toast('Load signals first');}
+
+// ── Claude key ────────────────────────────────────────────
+function saveClaude(){
+  const k=document.getElementById('clKey').value.trim();CL=k;
+  if(k.startsWith('sk-ant')){localStorage.setItem('sm_cl',k);setKstat('clStat','✓ saved','ok');toast('Claude key saved ✓');updSrc(!!FH);}
+  else setKstat('clStat','✗ bad format','err');
+}
+
+// ── Utils ─────────────────────────────────────────────────
+function calcScore(n,v,isExec){return Math.round(Math.min(Math.min(n*12,50)+Math.min(Math.log10(Math.max(v,1))*7,35)+(isExec?15:0),99));}
+function fmtMoney(v){if(!v||isNaN(v))return'—';if(v>=1e9)return`$${(v/1e9).toFixed(1)}B`;if(v>=1e6)return`$${(v/1e6).toFixed(1)}M`;if(v>=1e3)return`$${(v/1e3).toFixed(0)}K`;return`$${Math.round(v)}`;}
+function fmtDate(d){return d.toISOString().split('T')[0];}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+function setKstat(id,txt,cls){const el=document.getElementById(id);el.textContent=txt;el.className=`kstat ${cls}`;}
+function animN(id,target){if(!target||target<0)return;let c=0;const el=document.getElementById(id);if(!el)return;const step=Math.ceil(target/20);const t=setInterval(()=>{c=Math.min(c+step,target);el.textContent=c;if(c>=target)clearInterval(t);},40);}
+function showProgress(on,label,pct){document.getElementById('progressWrap').className=on?'progress-wrap on':'progress-wrap';if(label){document.getElementById('progressLabel').textContent=label;document.getElementById('progressPct').textContent=(pct||0)+'%';document.getElementById('progressFill').style.width=(pct||0)+'%';}}
+function setProgress(label,pct){document.getElementById('progressLabel').textContent=label;document.getElementById('progressPct').textContent=pct+'%';document.getElementById('progressFill').style.width=pct+'%';}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3500);}
+</script>
+</body>
+</html>
