@@ -260,13 +260,16 @@ def get_sec_13f_dataset():
             try:
                 parts = line.split("\t")
                 if len(parts) < 7: continue
+                # INFOTABLE accession format: 0001172661-26-001091 (with dashes)
                 accnum    = parts[0].strip()
+                # Normalise — store both dashed and undashed versions
+                accnum_nodash = accnum.replace("-","")
                 name      = parts[2].strip()
                 value_raw = parts[6].strip()
                 # Post Jan 2023: values in dollars. Pre Jan 2023: in thousands.
                 # The zip filename tells us the period — assume dollars for 2025+
                 value = int(value_raw) if value_raw.isdigit() else 0
-                # If value looks too small (< 100), it's probably still in thousands
+                # If value looks too small (< 1000), it's probably still in thousands
                 if value > 0 and value < 1000:
                     value = value * 1000
                 disc      = parts[9].strip() if len(parts)>9 else "SOLE"
@@ -277,12 +280,20 @@ def get_sec_13f_dataset():
                 ticker = name_to_ticker_map(name)
                 if not ticker: continue
 
+                # Store under both formats
                 fund_holdings.setdefault(accnum, []).append({
+                    "ticker": ticker, "name": name, "value": value
+                })
+                fund_holdings.setdefault(accnum_nodash, []).append({
                     "ticker": ticker, "name": name, "value": value
                 })
             except: continue
 
-        log(f"   Found holdings in {len(fund_holdings)} filings")
+        log(f"   Parsed holdings in {len(fund_holdings)} unique accessions")
+        # Debug: show first few accession numbers from INFOTABLE
+        sample_accs = list(fund_holdings.keys())[:5]
+        log(f"   Sample INFOTABLE accessions: {sample_accs}")
+        log(f"   Fund accessions looking for: {list(fund_accessions.keys())[:5]}")
 
         # Now get submission metadata to identify top fund names
         # Use EDGAR submissions API for our known funds
@@ -306,8 +317,12 @@ def get_sec_13f_dataset():
                             if (datetime.now()-datetime.strptime(dt,"%Y-%m-%d")).days > 200: break
                         except: break
                         if acc:
-                            fund_accessions[acc] = fund_name
-                            log(f"   {fund_name}: accession {acc} ({dt})")
+                            # Store both formats to match INFOTABLE
+                            acc_nodash = acc.replace("-","")
+                            acc_dashed = f"{acc[:10]}-{acc[10:12]}-{acc[12:]}" if len(acc)==18 else acc
+                            fund_accessions[acc_nodash] = fund_name
+                            fund_accessions[acc_dashed]  = fund_name
+                            log(f"   {fund_name}: {acc_dashed} ({dt})")
                         break
                 sleep(0.3)
             except: continue
