@@ -184,17 +184,14 @@ def get_sec_13f_dataset():
     log("3. SEC EDGAR 13F quarterly dataset...")
     signals = []
 
-    # SEC publishes these at predictable URLs
-    # Most recent complete quarter: Q4 2025 (filed Feb 2026)
-    dataset_urls = [
-        "https://www.sec.gov/files/form13f/2025-Q4-13F-infotable.tsv",
-        "https://www.sec.gov/files/form13f/2026-Q1-13F-infotable.tsv",  # if available
-    ]
+    # SEC correct URL format: /files/structureddata/data/form-13f-data-sets/
+    # Latest: Dec 2025 - Feb 2026 quarter (filed by institutions in Feb 2026)
+    dataset_urls = []  # no direct TSV — only zip
 
-    # Also try the zip format
     zip_urls = [
-        "https://www.sec.gov/files/form13f/2025-Q4-13F.zip",
-        "https://www.sec.gov/files/form13f/2026-Q1-13F.zip",
+        "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01dec2025-28feb2026_form13f.zip",
+        "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01sep2025-30nov2025_form13f.zip",
+        "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01jun2025-31aug2025_form13f.zip",
     ]
 
     infotable_data = None
@@ -217,16 +214,28 @@ def get_sec_13f_dataset():
     if not infotable_data:
         for url in zip_urls:
             try:
-                log(f"   Trying ZIP: {url.split('/')[-1]}")
-                r = requests.get(url, headers=SEC_HEADERS, timeout=120, stream=True)
+                log(f"   Trying: {url.split('/')[-1]}")
+                r = requests.get(url, headers=SEC_HEADERS, timeout=120)
                 if r.status_code == 200:
+                    log(f"   ✓ Downloaded ({len(r.content)//1024}KB) — extracting...")
                     z = zipfile.ZipFile(io.BytesIO(r.content))
+                    log(f"   Files in zip: {z.namelist()}")
                     for name in z.namelist():
-                        if "infotable" in name.lower():
+                        nl = name.lower()
+                        if "infotable" in nl and nl.endswith(".tsv"):
                             infotable_data = z.read(name).decode("utf-8", errors="ignore")
                             log(f"   ✓ Extracted {name} ({len(infotable_data)//1024}KB)")
                             break
+                    if not infotable_data:
+                        # Try any TSV file
+                        for name in z.namelist():
+                            if name.lower().endswith(".tsv"):
+                                infotable_data = z.read(name).decode("utf-8", errors="ignore")
+                                log(f"   ✓ Using {name} ({len(infotable_data)//1024}KB)")
+                                break
                     if infotable_data: break
+                else:
+                    log(f"   HTTP {r.status_code}")
             except Exception as e:
                 log(f"   ZIP error: {e}")
 
@@ -253,7 +262,13 @@ def get_sec_13f_dataset():
                 if len(parts) < 7: continue
                 accnum    = parts[0].strip()
                 name      = parts[2].strip()
-                value     = int(parts[6].strip()) * 1000 if parts[6].strip().isdigit() else 0
+                value_raw = parts[6].strip()
+                # Post Jan 2023: values in dollars. Pre Jan 2023: in thousands.
+                # The zip filename tells us the period — assume dollars for 2025+
+                value = int(value_raw) if value_raw.isdigit() else 0
+                # If value looks too small (< 100), it's probably still in thousands
+                if value > 0 and value < 1000:
+                    value = value * 1000
                 disc      = parts[9].strip() if len(parts)>9 else "SOLE"
 
                 if value < 1_000_000: continue  # skip small positions
