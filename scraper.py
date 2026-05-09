@@ -332,12 +332,15 @@ def weighted_score(signals_for_ticker, politician_hit_rates):
     n_sources = len(sources_present)
     if n_sources >= 3:
         overlap_mult = 2.5   # all three = massive boost
+        cap = 99
     elif n_sources == 2:
         overlap_mult = 1.6   # two sources = strong signal
+        cap = 85
     else:
         overlap_mult = 1.0   # single source = no boost
+        cap = 60             # cap single-source at 60 max
 
-    final = min(round(base * overlap_mult), 99)
+    final = min(round(base * overlap_mult), cap)
     return final, source_details, sources_present
 
 
@@ -390,7 +393,7 @@ def get_finnhub_insider():
 # 2. SENATE STOCK WATCHER (with hit rate calculation)
 # ══════════════════════════════════════════════════════════
 def get_senate_trades():
-    log("2. Senate trades (6-month window + hit rate calc)...")
+    log("2. Senate trades (6-month window)...")
     url = "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json"
     try:
         r = requests.get(url, timeout=30,
@@ -399,40 +402,73 @@ def get_senate_trades():
             log(f"   HTTP {r.status_code}")
             return [], {}
         all_trades = r.json()
-        log(f"   Got {len(all_trades)} total historical records")
+        log(f"   Got {len(all_trades)} total records")
+        # Debug: show first record's date format
+        sample = next((t for t in all_trades if t.get("transaction_date")), None)
+        if sample:
+            log(f"   Sample date format: '{sample.get('transaction_date','')}' type={type(sample.get('transaction_date',''))}")
     except Exception as e:
         log(f"   Error: {e}")
         return [], {}
 
-    # Calculate hit rates from ALL historical data before filtering
-    hit_rates = calculate_politician_hit_rates(all_trades)
+    # Skip hit rate calc — too slow for GitHub Actions free tier
+    # Use curated base weights only
+    hit_rates = {}
 
-    # Now filter to 6-month window for signals
+    # Filter to 6-month window
     signals = []
     skipped_old = 0
+    skipped_format = 0
+    in_count = 0
+
     for tx in all_trades:
         try:
             if tx.get("type","").lower() not in ["purchase","buy"]: continue
             ticker = tx.get("ticker","").strip()
             if not ticker or ticker=="--" or len(ticker)>5: continue
-            date_str = str(tx.get("transaction_date",""))[:10]
-            if not in_window(date_str):
+
+            # Handle multiple date formats robustly
+            raw_date = tx.get("transaction_date","")
+            if not raw_date:
+                skipped_format += 1
+                continue
+
+            # Try multiple formats
+            tx_date = None
+            raw_str = str(raw_date).strip()
+            for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%d-%b-%y",
+                        "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
+                try:
+                    tx_date = datetime.strptime(raw_str[:len(fmt)], fmt)
+                    break
+                except: pass
+
+            if not tx_date:
+                skipped_format += 1
+                continue
+
+            da = (datetime.now() - tx_date).days
+            if da > LOOKBACK_DAYS:
                 skipped_old += 1
                 continue
+
+            in_count += 1
             amt  = parse_amount(tx.get("amount",""))
             name = (tx.get("senator","") or
                     f"{tx.get('first_name','')} {tx.get('last_name','')}").strip()
+            date_str = tx_date.strftime("%Y-%m-%d")
+
             signals.append({
                 "ticker":ticker.upper(),"company_name":tx.get("asset_description",ticker),
                 "signal_type":"buy","source":"congress","value_usd":amt,"insider_count":1,
                 "insider_names":name,"roles":"Senator","is_exec":False,
-                "trade_date":date_str,"days_ago":days_ago(date_str),
+                "trade_date":date_str,"days_ago":da,
                 "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
             })
         except: continue
 
-    log(f"   Skipped {skipped_old} trades older than 6 months")
-    log(f"   → {len(signals)} senate signals in window")
+    log(f"   In window: {in_count}, Skipped old: {skipped_old}, Bad format: {skipped_format}")
+    log(f"   → {len(signals)} senate signals")
     return signals, hit_rates
 
 
