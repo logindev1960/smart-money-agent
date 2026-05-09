@@ -485,17 +485,109 @@ const SCAN_TICKERS = [
   'HON','GE','NKE','LULU','SBUX','MCD','TGT','CMCSA','SPOT','BKNG'
 ];
 
+// ── Supabase config (baked in — publishable key only) ─────
+const SB_URL = 'https://zovcenphlnjtvtpkruhu.supabase.co';
+const SB_KEY = 'sb_publishable_C8JegFm7X8FF9a-P0vV3ug_Y9YmJiVX';
+
 // ── Boot ──────────────────────────────────────────────────
-window.onload = () => {
+window.onload = async () => {
   document.getElementById('digestDate').textContent =
     new Date().toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'});
   const fk = localStorage.getItem('sm_fh');
   const ck = localStorage.getItem('sm_cl');
-  if(fk){ document.getElementById('fhKey').value=fk; FH=fk; connectFH(); }
+  if(fk){ document.getElementById('fhKey').value=fk; FH=fk; setKstat('fhStat','✓ connected','ok'); }
   if(ck){ document.getElementById('clKey').value=ck; CL=ck; setKstat('clStat','✓ loaded','ok'); }
+
+  // Always load from Supabase first (scraped signals — all sources)
+  await loadFromSupabase();
+
+  // Then connect Finnhub for live prices if key available
+  if(fk) await enrichPricesFromFinnhub();
 };
 
-// ── Connect ───────────────────────────────────────────────
+// ── Load signals from Supabase ────────────────────────────
+async function loadFromSupabase() {
+  showProgress(true, 'Loading signals from database...', 10);
+  try {
+    const r = await fetch(
+      `${SB_URL}/rest/v1/signals?select=*&signal_type=eq.buy&order=score.desc&limit=200`,
+      { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+    );
+    if(!r.ok){ showProgress(false); toast('Supabase error — connect Finnhub to load live data'); return; }
+    const rows = await r.json();
+    if(!rows.length){
+      showProgress(false);
+      document.getElementById('sigBody').innerHTML = `<tr><td colspan="7" class="empty">
+        No signals in database yet.<br><br>
+        The scraper runs daily at 8am UTC — or trigger it manually in GitHub Actions.<br>
+        You can also connect your Finnhub key above to load live insider data right now.
+      </td></tr>`;
+      toast('Database empty — run the scraper in GitHub Actions or connect Finnhub');
+      return;
+    }
+
+    // Map Supabase rows to allSignals format
+    allSignals = rows.map(row => ({
+      ticker:       row.ticker,
+      type:         row.signal_type || 'buy',
+      sources:      (row.source||'insider').split(', '),
+      rawVal:       row.value_usd || 0,
+      value:        fmtMoney(row.value_usd || 0),
+      insiders:     (row.insider_names||'').split(', ').filter(Boolean),
+      roles:        (row.roles||'').split(', ').filter(Boolean),
+      isExec:       row.is_exec || false,
+      insiderCount: row.insider_count || 1,
+      companyName:  row.company_name || row.ticker,
+      date:         row.trade_date || '',
+      score:        row.score || 0,
+      sector:       row.sector || 'Other',
+      rawBuys:      [],
+      fromSupabase: true,
+    }));
+
+    // Update stats
+    animN('stRaw', rows.length);
+    animN('stTickers', new Set(rows.map(r=>r.ticker)).size);
+
+    renderSignals();
+    renderTopPicks();
+    updateStats();
+    renderHeatmap();
+    renderDigest();
+    updSrc(true);
+
+    const rc = document.getElementById('rawCount');
+    rc.style.display = 'block';
+    document.getElementById('showCount').textContent = allSignals.length;
+    document.getElementById('totalCount').textContent = allSignals.length;
+
+    // Show source breakdown
+    const sources = [...new Set(rows.map(r=>r.source).join(', ').split(', '))].filter(Boolean);
+    toast(`Loaded ${rows.length} signals from: ${sources.join(', ')} ✓`);
+    showProgress(false);
+  } catch(e) {
+    showProgress(false);
+    toast('Could not reach database — connect Finnhub key to load live data');
+    console.error('Supabase load error:', e);
+  }
+}
+
+// ── Enrich top picks with live prices from Finnhub ────────
+async function enrichPricesFromFinnhub() {
+  if(!FH) return;
+  const top = allSignals.slice(0, 15);
+  for(const sig of top){
+    try {
+      const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sig.ticker}&token=${FH}`);
+      const d = await r.json();
+      if(d.c){ sig.currentPrice = d.c; sig.priceChange = d.dp; }
+    } catch(e){}
+    await sleep(400);
+  }
+  renderTopPicks();
+  renderSignals();
+}
+
 async function connectFH() {
   const k = document.getElementById('fhKey').value.trim();
   if(!k){ toast('Paste your Finnhub key first'); return; }
@@ -507,14 +599,28 @@ async function connectFH() {
     if(d.c > 0){
       localStorage.setItem('sm_fh', FH);
       setKstat('fhStat','✓ connected','ok');
-      startLoad();
+      if(allSignals.length > 0){
+        toast('Finnhub connected — enriching with live prices...');
+        await enrichPricesFromFinnhub();
+      } else {
+        startLoad();
+      }
     } else { setKstat('fhStat','✗ invalid key','err'); }
   } catch(e){ setKstat('fhStat','✗ failed','err'); }
 }
 
-// ── Main loader ───────────────────────────────────────────
+// ── Main loader (Supabase first, Finnhub fallback) ────────
 async function startLoad() {
-  if(!FH){ toast('Connect Finnhub first'); return; }
+  // Always try Supabase first
+  await loadFromSupabase();
+  // Then enrich prices if Finnhub connected
+  if(FH) await enrichPricesFromFinnhub();
+  // If Supabase was empty, fall back to live Finnhub scan
+  if(!allSignals.length && FH) await startFinnhubScan();
+}
+
+async function startFinnhubScan() {
+  if(!FH) return;
   document.getElementById('refreshBtn').disabled = true;
   allSignals = []; rawTxns = []; companyCache = {};
   showProgress(true, 'Scanning market for insider activity...', 5);
