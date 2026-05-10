@@ -325,14 +325,26 @@ def get_track_weight(source, role, names):
         return 10
     return 5
 
-def freshness_factor(da):
-    """How fresh is the signal? Decays sharply after 30 days."""
-    if da <= 7:   return 1.0
-    if da <= 14:  return 0.90
-    if da <= 30:  return 0.75
-    if da <= 60:  return 0.45
-    if da <= 90:  return 0.20
-    return 0.08  # 13F lag — still counts for convergence but not timing
+def freshness_factor(da, source):
+    """
+    How fresh is the signal?
+    Insider/Congress: decays sharply — these should be acted on quickly
+    Hedge fund 13F: structurally lagged by 45-90 days — use flat weight
+    """
+    if source == "hedge_fund":
+        # 13F is always lagged — don't penalise for that
+        # But do decay if extremely old (>6 months)
+        if da <= 90:  return 0.7   # normal 13F lag — still valid
+        if da <= 180: return 0.4   # older quarter — less relevant
+        return 0.1
+    else:
+        # Insider/Congress — freshness matters a lot
+        if da <= 7:   return 1.0
+        if da <= 14:  return 0.90
+        if da <= 30:  return 0.75
+        if da <= 60:  return 0.45
+        if da <= 90:  return 0.20
+        return 0.08
 
 def value_factor(source, v):
     """Is this a meaningful amount for this type of buyer?"""
@@ -371,7 +383,7 @@ def weighted_score(signals_for_ticker, politician_hit_rates={}):
         n     = sig.get("insider_count", 1)
 
         tw  = get_track_weight(src, role, names)
-        fr  = freshness_factor(da)
+        fr  = freshness_factor(da, src)
         vf  = value_factor(src, v)
 
         # Cluster boost — multiple insiders in same company
@@ -469,136 +481,100 @@ def get_finnhub_insider():
 
 
 # ══════════════════════════════════════════════════════════
-# 2. SENATE STOCK WATCHER (with hit rate calculation)
+# 2. CONGRESS TRADES
+# Primary: Quiver Quantitative (add QUIVER_KEY secret)
+# Fallback: House Stock Watcher free API
 # ══════════════════════════════════════════════════════════
 def get_senate_trades():
-    log("2. Senate trades (6-month window)...")
-    url = "https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json"
-    try:
-        r = requests.get(url, timeout=30,
-            headers={"User-Agent":"SmartMoneyAgent/1.0 research@example.com"})
-        if r.status_code != 200:
-            log(f"   HTTP {r.status_code}")
-            return [], {}
-        all_trades = r.json()
-        log(f"   Got {len(all_trades)} total records")
-        # Debug: show first record's date format
-        sample = next((t for t in all_trades if t.get("transaction_date")), None)
-        if sample:
-            log(f"   Sample date format: '{sample.get('transaction_date','')}' type={type(sample.get('transaction_date',''))}")
-    except Exception as e:
-        log(f"   Error: {e}")
-        return [], {}
-
-    # Skip hit rate calc — too slow for GitHub Actions free tier
-    # Use curated base weights only
-    hit_rates = {}
-
-    # Filter to 6-month window
+    log("2. Congress trades...")
     signals = []
-    skipped_old = 0
-    skipped_format = 0
-    in_count = 0
+    hit_rates = {}
+    QUIVER_KEY = os.environ.get("QUIVER_KEY","")
 
-    for tx in all_trades:
+    # ── Quiver Quant (best source — real-time, both House + Senate) ──
+    if QUIVER_KEY:
         try:
-            if tx.get("type","").lower() not in ["purchase","buy"]: continue
-            ticker = tx.get("ticker","").strip()
-            if not ticker or ticker=="--" or len(ticker)>5: continue
+            log("   Using Quiver Quantitative API...")
+            r = requests.get(
+                "https://api.quiverquant.com/beta/bulk/congresstrading",
+                headers={
+                    "Accept": "application/json",
+                    "Authorization": f"Token {QUIVER_KEY}",
+                },
+                timeout=20
+            )
+            if r.status_code == 200:
+                data = r.json()
+                log(f"   Quiver: {len(data)} total congress trades")
+                for tx in data:
+                    try:
+                        if tx.get("Transaction","").lower() not in ["purchase","buy"]: continue
+                        ticker = tx.get("Ticker","").strip()
+                        if not ticker or len(ticker)>5: continue
+                        date_str = str(tx.get("TransactionDate",""))[:10]
+                        d = parse_date(date_str)
+                        if not d: continue
+                        da = (datetime.now()-d).days
+                        if da > LOOKBACK_DAYS: continue
+                        amt = parse_amount(tx.get("Range",""))
+                        name = tx.get("Representative","Unknown")
+                        signals.append({
+                            "ticker":ticker.upper(),
+                            "company_name":tx.get("Asset",""),
+                            "signal_type":"buy","source":"congress",
+                            "value_usd":amt,"insider_count":1,
+                            "insider_names":name,
+                            "roles":tx.get("House","Congress"),
+                            "is_exec":False,"trade_date":date_str,"days_ago":da,
+                            "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
+                        })
+                    except: continue
+                log(f"   → {len(signals)} congress signals")
+                return signals, hit_rates
+            else:
+                log(f"   Quiver HTTP {r.status_code} — trying fallback")
+        except Exception as e:
+            log(f"   Quiver error: {e} — trying fallback")
 
-            # Handle multiple date formats robustly
-            raw_date = tx.get("transaction_date") or tx.get("transactionDate") or tx.get("date") or ""
-            if not raw_date:
-                skipped_format += 1
-                continue
-
-            # Try multiple formats
-            tx_date = None
-            raw_str = str(raw_date).strip()
-            for fmt in ["%m/%d/%Y", "%Y-%m-%d", "%m/%d/%y", "%d-%b-%y",
-                        "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"]:
+    # ── Fallback: House Stock Watcher (free, House only) ──
+    try:
+        log("   House Stock Watcher fallback...")
+        r = requests.get("https://housestockwatcher.com/api",
+            headers={"User-Agent":"SmartMoneyAgent/1.0 research@example.com"},
+            timeout=20)
+        if r.status_code == 200:
+            for tx in r.json():
                 try:
-                    tx_date = datetime.strptime(raw_str[:10], fmt[:len(raw_str[:10])])
-                    break
-                except: pass
+                    if tx.get("type","").lower() != "purchase": continue
+                    ticker = tx.get("ticker","").strip()
+                    if not ticker or ticker=="--" or len(ticker)>5: continue
+                    date_str = str(tx.get("transaction_date",""))[:10]
+                    d = parse_date(date_str)
+                    if not d: continue
+                    da = (datetime.now()-d).days
+                    if da > LOOKBACK_DAYS: continue
+                    amt = parse_amount(tx.get("amount",""))
+                    name = tx.get("representative","Unknown Rep")
+                    signals.append({
+                        "ticker":ticker.upper(),
+                        "company_name":tx.get("asset_description",ticker),
+                        "signal_type":"buy","source":"congress",
+                        "value_usd":amt,"insider_count":1,
+                        "insider_names":name,"roles":"House Representative",
+                        "is_exec":False,"trade_date":date_str,"days_ago":da,
+                        "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
+                    })
+                except: continue
+            log(f"   House Stock Watcher: {len(signals)} signals")
+        else:
+            log(f"   House Stock Watcher HTTP {r.status_code}")
+    except Exception as e:
+        log(f"   House Stock Watcher error: {e}")
 
-            if not tx_date:
-                skipped_format += 1
-                continue
-
-            da = (datetime.now() - tx_date).days
-            if da > LOOKBACK_DAYS:
-                skipped_old += 1
-                continue
-
-            in_count += 1
-            amt  = parse_amount(tx.get("amount",""))
-            name = (tx.get("senator","") or
-                    f"{tx.get('first_name','')} {tx.get('last_name','')}").strip()
-            date_str = tx_date.strftime("%Y-%m-%d")
-
-            signals.append({
-                "ticker":ticker.upper(),"company_name":tx.get("asset_description",ticker),
-                "signal_type":"buy","source":"congress","value_usd":amt,"insider_count":1,
-                "insider_names":name,"roles":"Senator","is_exec":False,
-                "trade_date":date_str,"days_ago":da,
-                "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
-            })
-        except: continue
-
-    log(f"   In window: {in_count}, Skipped old: {skipped_old}, Bad format: {skipped_format}")
-    log(f"   → {len(signals)} senate signals")
-
-    # If Senate Stock Watcher data is stale, try official SEC EDGAR
-    if len(signals) == 0:
-        log("   Senate aggregate stale — trying official SEC EDGAR Senate disclosures...")
-        signals = get_senate_from_edgar()
+    if not signals:
+        log("   ⚠ No congress data — add QUIVER_KEY to GitHub Secrets for full coverage")
 
     return signals, hit_rates
-
-
-def get_senate_from_edgar():
-    """Pull Senate STOCK Act filings directly from SEC EDGAR efdsearch."""
-    signals = []
-    try:
-        # Official Senate financial disclosure search API
-        r = requests.get(
-            "https://efdsearch.senate.gov/search/report/data/",
-            params={
-                "limit": 100,
-                "offset": 0,
-                "report_types": "[11]",  # 11 = Periodic Transaction Report (PTR)
-                "submitted_start_date": CUTOFF.strftime("%Y-%m-%d 00:00:00"),
-            },
-            headers={
-                "User-Agent": "SmartMoneyAgent/1.0 research@example.com",
-                "Referer": "https://efdsearch.senate.gov/search/",
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json",
-            },
-            timeout=15
-        )
-        if r.status_code == 200:
-            d = r.json()
-            filings = d.get("data", [])
-            log(f"   SEC EDGAR Senate: {len(filings)} PTR filings found")
-            # Each filing needs individual fetch — log count for now
-            # The data structure: [first_name, last_name, office, report_type, link, date]
-            for filing in filings[:20]:
-                try:
-                    name = f"{filing[0]} {filing[1]}".strip() if len(filing)>1 else "Unknown"
-                    date_str = str(filing[5])[:10] if len(filing)>5 else ""
-                    link = filing[4] if len(filing)>4 else ""
-                    log(f"   Filing: {name} — {date_str}")
-                    # Would need to fetch each PTR URL to get individual transactions
-                    # For now add as a general "senator active" signal
-                except: continue
-        else:
-            log(f"   SEC EDGAR Senate HTTP {r.status_code}")
-    except Exception as e:
-        log(f"   SEC EDGAR Senate error: {e}")
-
-    return signals
 
 
 # ══════════════════════════════════════════════════════════
