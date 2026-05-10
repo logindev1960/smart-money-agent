@@ -534,53 +534,94 @@ def get_senate_trades():
         except Exception as e:
             log(f"   Quiver error: {e} — trying fallback")
 
-    # ── Fallback: Lambda Finance (free, no auth, both chambers) ──
+    # ── Fallback: Official Senate EFD + House Clerk (always accessible) ──
+    # Senate: efdsearch.senate.gov
+    # House: disclosures-clerk.house.gov
     try:
-        log("   Trying Lambda Finance API (free, both chambers)...")
+        log("   Trying official Senate EFD search API...")
         r = requests.get(
-            "https://api.lambdafin.com/api/congressional/recent",
+            "https://efdsearch.senate.gov/search/report/data/",
             params={
-                "transaction_type": "purchase",
-                "limit": 500,
+                "limit": 100,
+                "offset": 0,
+                "report_types": "[11]",
+                "submitted_start_date": (datetime.now()-timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%d 00:00:00"),
             },
-            headers={"User-Agent":"SmartMoneyAgent/1.0 research@example.com"},
-            timeout=20
+            headers={
+                "User-Agent": "SmartMoneyAgent/1.0 research@example.com",
+                "Referer": "https://efdsearch.senate.gov/search/",
+                "X-Requested-With": "XMLHttpRequest",
+                "Accept": "application/json",
+            },
+            timeout=15
         )
         if r.status_code == 200:
-            data = r.json()
-            trades = data if isinstance(data, list) else data.get("trades", data.get("data", []))
-            log(f"   Lambda Finance: {len(trades)} trades")
-            for tx in trades:
+            d = r.json()
+            filings = d.get("data",[])
+            log(f"   Senate EFD: {len(filings)} PTR filings")
+            # Each filing is [first_name, last_name, office, report_type, link, date_received]
+            # We need to fetch each individual filing to get transactions
+            # Limit to 20 most recent to stay within rate limits
+            for filing in filings[:20]:
                 try:
-                    # Normalise field names
-                    ticker = (tx.get("ticker") or tx.get("symbol","")).strip()
-                    if not ticker or len(ticker)>5: continue
-                    tx_type = (tx.get("transaction_type") or tx.get("type","")).lower()
-                    if "purchase" not in tx_type and "buy" not in tx_type: continue
-                    date_str = str(tx.get("transaction_date") or tx.get("date",""))[:10]
-                    d = parse_date(date_str)
-                    if not d: continue
-                    da = (datetime.now()-d).days
-                    if da > LOOKBACK_DAYS: continue
-                    amt = parse_amount(tx.get("amount") or tx.get("amount_range",""))
-                    name = tx.get("member") or tx.get("representative") or tx.get("senator","Unknown")
-                    signals.append({
-                        "ticker":ticker.upper(),
-                        "company_name":tx.get("asset",""),
-                        "signal_type":"buy","source":"congress",
-                        "value_usd":amt,"insider_count":1,
-                        "insider_names":name,
-                        "roles":tx.get("chamber","Congress"),
-                        "is_exec":False,"trade_date":date_str,"days_ago":da,
-                        "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
-                    })
+                    name = f"{filing[0]} {filing[1]}".strip()
+                    ptr_url = filing[4] if len(filing)>4 else ""
+                    date_str = str(filing[5])[:10] if len(filing)>5 else ""
+                    if not ptr_url: continue
+
+                    # Fetch the individual PTR filing
+                    sleep(0.5)
+                    fr = requests.get(ptr_url,
+                        headers={"User-Agent":"SmartMoneyAgent/1.0 research@example.com"},
+                        timeout=10)
+                    if fr.status_code != 200: continue
+
+                    # Parse transactions from the JSON response
+                    fd = fr.json()
+                    transactions = fd.get("transactions",[]) if isinstance(fd,dict) else []
+                    for tx in transactions:
+                        try:
+                            tx_type = (tx.get("type","") or tx.get("transaction_type","")).lower()
+                            if "purchase" not in tx_type: continue
+                            ticker = (tx.get("ticker","") or tx.get("symbol","")).strip()
+                            if not ticker or ticker=="--" or len(ticker)>5: continue
+                            amt = parse_amount(tx.get("amount",""))
+                            d2 = parse_date(date_str)
+                            da = (datetime.now()-d2).days if d2 else 90
+                            signals.append({
+                                "ticker":ticker.upper(),
+                                "company_name":tx.get("asset_description",ticker),
+                                "signal_type":"buy","source":"congress",
+                                "value_usd":amt,"insider_count":1,
+                                "insider_names":name,"roles":"Senator",
+                                "is_exec":False,"trade_date":date_str,"days_ago":da,
+                                "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
+                            })
+                        except: continue
                 except: continue
-            log(f"   → {len(signals)} congress signals from Lambda Finance")
-            if signals: return signals, hit_rates
+            log(f"   Senate EFD: {len(signals)} signals parsed")
         else:
-            log(f"   Lambda Finance HTTP {r.status_code}")
+            log(f"   Senate EFD HTTP {r.status_code}")
     except Exception as e:
-        log(f"   Lambda Finance error: {e}")
+        log(f"   Senate EFD error: {e}")
+
+    # House clerk disclosures
+    try:
+        log("   Trying House clerk disclosures...")
+        # House financial disclosures are at disclosures-clerk.house.gov
+        # The search endpoint accepts GET requests
+        year = datetime.now().year
+        r = requests.get(
+            "https://disclosures-clerk.house.gov/FinancialDisclosure/ViewMemberSearchResult",
+            params={"LastName":"","FilingYear":year,"State":"","District":""},
+            headers={"User-Agent":"SmartMoneyAgent/1.0 research@example.com"},
+            timeout=15
+        )
+        log(f"   House clerk HTTP {r.status_code}")
+        # House clerk returns HTML — harder to parse programmatically
+        # Skip for now, Senate EFD is the cleaner source
+    except Exception as e:
+        log(f"   House clerk error: {e}")
 
     if not signals:
         log("   ⚠ No congress data — add QUIVER_KEY to GitHub Secrets for full coverage")
@@ -691,34 +732,64 @@ def get_hedge_fund_13f():
     log(f"   Matched {matched} holdings rows for {len(fund_holdings)} filings")
 
     # Also load previous quarter (Q3 2025) to detect NEW and INCREASED positions
-    prev_holdings = {}  # ticker -> shares across all funds last quarter
+    prev_ticker_shares = {}  # ticker -> total shares across all our target funds last quarter
     try:
         prev_url = "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01sep2025-30nov2025_form13f.zip"
-        log("   Loading Q3 2025 for comparison (new/increased positions)...")
+        log("   Loading Q3 2025 for new/increased position detection...")
         pr = requests.get(prev_url, headers=SEC_HEADERS, timeout=90)
         if pr.status_code == 200:
             pz = zipfile.ZipFile(io.BytesIO(pr.content))
+            # First get Q3 accession numbers for our funds
+            prev_fund_accessions = set()
+            for cik, (fund_name, weight) in FUND_TIER1_CIKS.items():
+                try:
+                    r2 = requests.get(f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json",
+                        headers=SEC_HEADERS, timeout=8)
+                    if r2.status_code != 200: continue
+                    d2 = r2.json()
+                    fls = d2.get("filings",{}).get("recent",{})
+                    for i, form in enumerate(fls.get("form",[])):
+                        if form not in ["13F-HR","13F-HR/A"]: continue
+                        dt = fls.get("filingDate",[])[i] if i<len(fls.get("filingDate",[])) else ""
+                        acc = fls.get("accessionNumber",[])[i] if i<len(fls.get("accessionNumber",[])) else ""
+                        # Q3 2025 = filed between Sep-Nov 2025
+                        try:
+                            fd = datetime.strptime(dt,"%Y-%m-%d")
+                            if 2025 == fd.year and fd.month in [8,9,10,11]:
+                                prev_fund_accessions.add(acc)
+                                prev_fund_accessions.add(acc.replace("-",""))
+                                break
+                        except: break
+                    sleep(0.2)
+                except: continue
+            log(f"   Q3 fund accessions: {len(prev_fund_accessions)//2} funds")
+
+            # Parse Q3 INFOTABLE
             for fname in pz.namelist():
                 if "INFOTABLE" in fname.upper() and fname.endswith(".tsv"):
-                    prev_lines = pz.read(fname).decode("utf-8", errors="ignore").split("\n")
-                    # Build set of {accnum+ticker: shares} for previous quarter
-                    prev_fund_accs = set(fund_accessions.keys())  # same funds
+                    prev_lines = pz.read(fname).decode("utf-8","ignore").split("\n")
+                    ph = [h.upper().strip() for h in prev_lines[0].split("\t")]
+                    def pc(n,d):
+                        try: return ph.index(n)
+                        except: return d
+                    pi_acc  = pc("ACCESSION_NUMBER",0)
+                    pi_name = pc("NAMEOFISSUER",2)
+                    pi_shr  = pc("SSHPRNAMT",7)
                     for pl in prev_lines[1:]:
                         try:
                             pp = pl.split("\t")
-                            if len(pp) < 8: continue
-                            pacc = pp[0].strip()
-                            if pacc not in prev_fund_accs and pacc.replace("-","") not in prev_fund_accs: continue
-                            pname = pp[2].strip()
-                            pticker = name_to_ticker_map(pname)
+                            if len(pp) <= max(pi_acc,pi_name,pi_shr): continue
+                            pacc = pp[pi_acc].strip()
+                            if pacc not in prev_fund_accessions and pacc.replace("-","") not in prev_fund_accessions: continue
+                            pticker = name_to_ticker_map(pp[pi_name].strip())
                             if not pticker: continue
-                            pshares = int(pp[7].strip()) if pp[7].strip().isdigit() else 0
-                            if pticker not in prev_holdings:
-                                prev_holdings[pticker] = 0
-                            prev_holdings[pticker] += pshares
+                            pshares = int(pp[pi_shr].strip()) if pp[pi_shr].strip().isdigit() else 0
+                            prev_ticker_shares[pticker] = prev_ticker_shares.get(pticker,0) + pshares
                         except: continue
-                    log(f"   Q3 comparison: {len(prev_holdings)} tickers tracked")
+                    log(f"   Q3 comparison: {len(prev_ticker_shares)} tickers tracked")
                     break
+        else:
+            log(f"   Q3 zip HTTP {pr.status_code} — all positions treated as 'held'")
     except Exception as e:
         log(f"   Q3 comparison error (non-fatal): {e}")
 
@@ -730,7 +801,7 @@ def get_hedge_fund_13f():
                 da = days_ago(h["filing_date"]) if h["filing_date"] else 90
 
                 # Detect position type vs previous quarter
-                prev_shares = prev_holdings.get(h["ticker"], 0)
+                prev_shares = prev_ticker_shares.get(h["ticker"], 0)
                 curr_shares = h["shares"]
                 if prev_shares == 0:
                     position_type = "new"        # brand new position
