@@ -404,32 +404,30 @@ def weighted_score(signals_for_ticker, politician_hit_rates={}):
     n_sources = len(sources_present)
     base = sum(best_per_source.values())
 
-    # Convergence multiplier — the heart of the system
-    # Did independent actors buy CLOSE IN TIME to each other?
+    # Convergence multiplier
     if n_sources >= 2:
-        days_vals  = list(source_days.values())
+        days_vals   = list(source_days.values())
         time_spread = max(days_vals) - min(days_vals)
-
         if n_sources >= 3:
-            # Triple source — massive signal regardless of timing
-            if time_spread <= 30:   conv = 4.0   # all three within a month = extraordinary
-            elif time_spread <= 60: conv = 3.0
-            else:                   conv = 2.0
+            conv = 4.0 if time_spread<=30 else 3.0 if time_spread<=60 else 2.0
         else:
-            # Double source
-            if time_spread <= 14:   conv = 2.8   # bought within 2 weeks of each other
-            elif time_spread <= 30: conv = 2.2
-            elif time_spread <= 60: conv = 1.6
-            else:                   conv = 1.2   # same stock but months apart = weak
+            conv = 2.8 if time_spread<=14 else 2.2 if time_spread<=30 else 1.6 if time_spread<=60 else 1.2
     else:
         conv = 1.0
 
     raw = base * conv
 
-    # Caps by source count — single source can NEVER be "high conviction"
+    # Caps — single source held positions are noise, new positions are signal
+    # Check if any signal is a new/increased hedge fund position
+    is_new_hf = any(
+        s.get("position_type") in ("new","increased") and s.get("source")=="hedge_fund"
+        for s in signals_for_ticker
+    )
+
     if n_sources >= 3:   cap = 99
     elif n_sources == 2: cap = 84
-    else:                cap = 58
+    elif is_new_hf:      cap = 72   # new HF position — meaningful single source
+    else:                cap = 52   # held/existing position — low conviction alone
 
     final = min(round(raw), cap)
     return final, source_details, sources_present
@@ -536,40 +534,53 @@ def get_senate_trades():
         except Exception as e:
             log(f"   Quiver error: {e} — trying fallback")
 
-    # ── Fallback: House Stock Watcher (free, House only) ──
+    # ── Fallback: Lambda Finance (free, no auth, both chambers) ──
     try:
-        log("   House Stock Watcher fallback...")
-        r = requests.get("https://housestockwatcher.com/api",
+        log("   Trying Lambda Finance API (free, both chambers)...")
+        r = requests.get(
+            "https://api.lambdafin.com/api/congressional/recent",
+            params={
+                "transaction_type": "purchase",
+                "limit": 500,
+            },
             headers={"User-Agent":"SmartMoneyAgent/1.0 research@example.com"},
-            timeout=20)
+            timeout=20
+        )
         if r.status_code == 200:
-            for tx in r.json():
+            data = r.json()
+            trades = data if isinstance(data, list) else data.get("trades", data.get("data", []))
+            log(f"   Lambda Finance: {len(trades)} trades")
+            for tx in trades:
                 try:
-                    if tx.get("type","").lower() != "purchase": continue
-                    ticker = tx.get("ticker","").strip()
-                    if not ticker or ticker=="--" or len(ticker)>5: continue
-                    date_str = str(tx.get("transaction_date",""))[:10]
+                    # Normalise field names
+                    ticker = (tx.get("ticker") or tx.get("symbol","")).strip()
+                    if not ticker or len(ticker)>5: continue
+                    tx_type = (tx.get("transaction_type") or tx.get("type","")).lower()
+                    if "purchase" not in tx_type and "buy" not in tx_type: continue
+                    date_str = str(tx.get("transaction_date") or tx.get("date",""))[:10]
                     d = parse_date(date_str)
                     if not d: continue
                     da = (datetime.now()-d).days
                     if da > LOOKBACK_DAYS: continue
-                    amt = parse_amount(tx.get("amount",""))
-                    name = tx.get("representative","Unknown Rep")
+                    amt = parse_amount(tx.get("amount") or tx.get("amount_range",""))
+                    name = tx.get("member") or tx.get("representative") or tx.get("senator","Unknown")
                     signals.append({
                         "ticker":ticker.upper(),
-                        "company_name":tx.get("asset_description",ticker),
+                        "company_name":tx.get("asset",""),
                         "signal_type":"buy","source":"congress",
                         "value_usd":amt,"insider_count":1,
-                        "insider_names":name,"roles":"House Representative",
+                        "insider_names":name,
+                        "roles":tx.get("chamber","Congress"),
                         "is_exec":False,"trade_date":date_str,"days_ago":da,
                         "sector":SECTOR_MAP.get(ticker.upper(),"Other"),
                     })
                 except: continue
-            log(f"   House Stock Watcher: {len(signals)} signals")
+            log(f"   → {len(signals)} congress signals from Lambda Finance")
+            if signals: return signals, hit_rates
         else:
-            log(f"   House Stock Watcher HTTP {r.status_code}")
+            log(f"   Lambda Finance HTTP {r.status_code}")
     except Exception as e:
-        log(f"   House Stock Watcher error: {e}")
+        log(f"   Lambda Finance error: {e}")
 
     if not signals:
         log("   ⚠ No congress data — add QUIVER_KEY to GitHub Secrets for full coverage")
@@ -665,27 +676,84 @@ def get_hedge_fund_13f():
             name      = parts[idx_name].strip() if len(parts)>idx_name else ""
             value_raw = parts[idx_value].strip() if len(parts)>idx_value else ""
             value     = int(value_raw) if value_raw.isdigit() else 0
+            shares_raw = parts[7].strip() if len(parts)>7 else ""
+            shares    = int(shares_raw) if shares_raw.isdigit() else 0
             if value < 100_000: continue
             ticker = name_to_ticker_map(name)
             if not ticker: continue
             matched += 1
-            fund_holdings[accnum][fund_name].append({"ticker":ticker,"name":name,"value":value,"filing_date":filing_date})
+            fund_holdings[accnum][fund_name].append({
+                "ticker":ticker,"name":name,"value":value,
+                "shares":shares,"filing_date":filing_date
+            })
         except: continue
 
-    log(f"   Matched {matched} holdings rows")
+    log(f"   Matched {matched} holdings rows for {len(fund_holdings)} filings")
 
-    # Build signals
+    # Also load previous quarter (Q3 2025) to detect NEW and INCREASED positions
+    prev_holdings = {}  # ticker -> shares across all funds last quarter
+    try:
+        prev_url = "https://www.sec.gov/files/structureddata/data/form-13f-data-sets/01sep2025-30nov2025_form13f.zip"
+        log("   Loading Q3 2025 for comparison (new/increased positions)...")
+        pr = requests.get(prev_url, headers=SEC_HEADERS, timeout=90)
+        if pr.status_code == 200:
+            pz = zipfile.ZipFile(io.BytesIO(pr.content))
+            for fname in pz.namelist():
+                if "INFOTABLE" in fname.upper() and fname.endswith(".tsv"):
+                    prev_lines = pz.read(fname).decode("utf-8", errors="ignore").split("\n")
+                    # Build set of {accnum+ticker: shares} for previous quarter
+                    prev_fund_accs = set(fund_accessions.keys())  # same funds
+                    for pl in prev_lines[1:]:
+                        try:
+                            pp = pl.split("\t")
+                            if len(pp) < 8: continue
+                            pacc = pp[0].strip()
+                            if pacc not in prev_fund_accs and pacc.replace("-","") not in prev_fund_accs: continue
+                            pname = pp[2].strip()
+                            pticker = name_to_ticker_map(pname)
+                            if not pticker: continue
+                            pshares = int(pp[7].strip()) if pp[7].strip().isdigit() else 0
+                            if pticker not in prev_holdings:
+                                prev_holdings[pticker] = 0
+                            prev_holdings[pticker] += pshares
+                        except: continue
+                    log(f"   Q3 comparison: {len(prev_holdings)} tickers tracked")
+                    break
+    except Exception as e:
+        log(f"   Q3 comparison error (non-fatal): {e}")
+
+    # Build signals — boost NEW and INCREASED positions
     for accnum, funds in fund_holdings.items():
         for fund_name, holdings in funds.items():
             top = sorted(holdings, key=lambda h:h["value"], reverse=True)[:25]
             for h in top:
                 da = days_ago(h["filing_date"]) if h["filing_date"] else 90
+
+                # Detect position type vs previous quarter
+                prev_shares = prev_holdings.get(h["ticker"], 0)
+                curr_shares = h["shares"]
+                if prev_shares == 0:
+                    position_type = "new"        # brand new position
+                    position_boost = 1.5
+                elif curr_shares > prev_shares * 1.5:
+                    position_type = "increased"  # added >50% more shares
+                    position_boost = 1.25
+                elif curr_shares > prev_shares * 1.1:
+                    position_type = "added"      # modest increase
+                    position_boost = 1.1
+                else:
+                    position_type = "held"       # existing position — lower signal
+                    position_boost = 0.6
+
                 signals.append({
                     "ticker":h["ticker"],"company_name":h["name"],
-                    "signal_type":"buy","source":"hedge_fund","value_usd":float(h["value"]),
-                    "insider_count":1,"insider_names":fund_name,"roles":"Hedge Fund 13F",
+                    "signal_type":"buy","source":"hedge_fund",
+                    "value_usd":float(h["value"]) * position_boost,  # boost reflected in value
+                    "insider_count":1,"insider_names":fund_name,
+                    "roles":f"Hedge Fund 13F ({position_type})",
                     "is_exec":False,"trade_date":h["filing_date"],"days_ago":da,
                     "sector":SECTOR_MAP.get(h["ticker"],"Other"),
+                    "position_type": position_type,
                 })
 
     log(f"   → {len(signals)} hedge fund signals")
@@ -743,7 +811,6 @@ def merge_and_score(all_signals, politician_hit_rates):
     for ticker, sigs in by_ticker.items():
         # Calculate weighted conviction score
         score, details, sources = weighted_score(sigs, politician_hit_rates)
-
         # Aggregate fields
         all_names  = []
         all_roles  = []
