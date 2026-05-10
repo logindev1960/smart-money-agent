@@ -1068,32 +1068,36 @@ async function loadAI(ticker, sig) {
   const rangePos = document.getElementById('mRangeLabel').textContent;
   const mktCap   = document.getElementById('mMktCap').textContent;
   const pe       = document.getElementById('mPE').textContent;
+  const mBeta    = document.getElementById('mBeta').textContent;
   const company  = document.getElementById('mCompany').textContent;
 
   try {
-    const prompt = `You are a senior hedge fund PM giving a quick briefing on a potential trade.
+    const prompt = `You are a senior analyst at a top hedge fund. You have just received a smart money alert on ${ticker} (${company}, ${sig.sector} sector).
 
-STOCK: ${ticker} — ${company}
-SECTOR: ${sig.sector} | Market cap: ${mktCap} | P/E: ${pe}
+SMART MONEY SIGNALS:
+${sig.sources.map(s => `- ${s.toUpperCase()}: ${sig.buyers.split(', ').slice(0,3).join(', ')} · ${fmtMoney(sig.value)} · ${sig.daysAgo}d ago`).join('\n')}
+Conviction score: ${sig.score}/99
+Sources: ${sig.source}
 
-SMART MONEY SIGNAL:
-- Sources firing: ${sig.source}
-- Key buyers: ${sig.buyers.slice(0,120)}
-- Total value: ${fmtMoney(sig.value)}
-- Signal age: ${sig.daysAgo} days ago
-- Conviction score: ${sig.score}/99
-
-TECHNICALS:
-- RSI: ${rsi} (${rsi<30?'oversold':rsi>70?'overbought':'neutral'})
-- Price positioning: ${rangePos}
+MARKET DATA:
+- Current price: ${document.getElementById('mPrice').textContent}
+- RSI (14d): ${rsi} → ${rsi<30?'OVERSOLD — buying into weakness (bullish)':rsi>70?'OVERBOUGHT — buying despite high price (very high conviction)':'NEUTRAL'}
+- 52-week position: ${rangePos}
+- Market cap: ${mktCap} | P/E: ${pe} | Beta: ${mBeta}
 - Analyst consensus: ${verdict}
+- Company profile: ${document.getElementById('mAbout').textContent}
 
-Respond in EXACTLY this JSON format (no other text):
+YOUR JOB:
+These smart money players have bought this stock. They know something. Your job is to figure out what they likely know, whether the technical setup supports entering now, and give a clear verdict.
+
+Respond in EXACTLY this JSON (no other text, no markdown):
 {
-  "thesis": "One crisp sentence explaining what thesis these buyers are acting on",
-  "edge": "One sentence on why this signal has edge — what do these specific buyers know or see that the market hasn't priced in",
-  "risk": "One sentence on the single biggest risk that could make this thesis wrong",
-  "verdict": "BUY or WATCH or AVOID"
+  "catalyst": "What catalyst or thesis do you think is driving this accumulation? Be specific about what these buyers likely see coming — regulatory change, earnings inflection, M&A, sector tailwind, etc. One sentence.",
+  "timing": "Based on RSI and 52-week positioning, is this a good entry point RIGHT NOW or should you wait? One sentence with a specific view.",
+  "conviction": "Why should someone who doesn't understand finance trust this signal? Explain in plain English why following these specific buyers has historically worked. One sentence.",
+  "risk": "What single event or development would make this thesis completely wrong? One sentence.",
+  "verdict": "BUY" or "WATCH" or "WAIT",
+  "verdict_reason": "One short phrase explaining the verdict — e.g. 'strong entry now' or 'wait for pullback to $X' or 'thesis unconfirmed'"
 }`;
 
     const r = await fetch('https://api.anthropic.com/v1/messages',{
@@ -1118,13 +1122,27 @@ Respond in EXACTLY this JSON format (no other text):
     // Show structured blocks
     document.getElementById('mAIBlocks').style.display = 'block';
     document.getElementById('mAIText').style.display = 'none';
-    document.getElementById('aiThesis').textContent = parsed.thesis || '—';
-    document.getElementById('aiEdge').textContent   = parsed.edge   || '—';
-    document.getElementById('aiRisk').textContent   = parsed.risk   || '—';
+    document.getElementById('aiThesis').innerHTML = `<strong style="color:var(--gold)">Likely catalyst:</strong> ${parsed.catalyst || '—'}`;
+    document.getElementById('aiEdge').innerHTML   = `<strong style="color:var(--green)">Why trust it:</strong> ${parsed.conviction || '—'}`;
+    document.getElementById('aiRisk').textContent = parsed.risk || '—';
+
+    // Timing box — add below risk if not present
+    let timingEl = document.getElementById('aiTiming');
+    if(!timingEl){
+      const timingDiv = document.createElement('div');
+      timingDiv.style = 'background:rgba(17,138,178,0.06);border:1px solid rgba(17,138,178,0.15);border-radius:8px;padding:12px;margin-bottom:12px';
+      timingDiv.innerHTML = `<div style="font-family:var(--mono);font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--blue);margin-bottom:6px">⏱ Entry Timing</div><div style="font-size:12px;line-height:1.6;color:var(--text)" id="aiTiming">—</div>`;
+      document.getElementById('mAIBlocks').insertBefore(timingDiv, document.getElementById('mAIBlocks').lastElementChild);
+      timingEl = document.getElementById('aiTiming');
+    }
+    if(timingEl) timingEl.textContent = parsed.timing || '—';
 
     const verdictEl = document.getElementById('aiVerdict');
-    verdictEl.textContent = parsed.verdict || 'WATCH';
-    verdictEl.style.color = parsed.verdict==='BUY' ? 'var(--green)' : parsed.verdict==='AVOID' ? 'var(--red)' : 'var(--gold)';
+    verdictEl.textContent = `${parsed.verdict || 'WATCH'} — ${parsed.verdict_reason || ''}`;
+    verdictEl.style.color = parsed.verdict==='BUY' ? 'var(--green)' : parsed.verdict==='WAIT' ? 'var(--blue)' : parsed.verdict==='AVOID' ? 'var(--red)' : 'var(--gold)';
+    verdictEl.style.fontSize = '16px';
+    verdictEl.style.fontFamily = 'var(--mono)';
+    verdictEl.style.fontWeight = '600';
 
     document.getElementById('mAIStatus').textContent = 'complete';
 
